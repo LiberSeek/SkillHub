@@ -2,24 +2,32 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from PIL import Image, ImageColor, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 
 HEAVY_FONT_CANDIDATES = [
-    "/Users/raven/Library/Fonts/_思源黑体SourceHanSansCN-Heavy.otf",
+    os.environ.get("CONTENT_DESIGNER_HEAVY_FONT", ""),
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 ]
 REGULAR_FONT_CANDIDATES = [
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 ]
 
 
 def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     candidates = HEAVY_FONT_CANDIDATES if bold else REGULAR_FONT_CANDIDATES
     for path in candidates:
+        if not path:
+            continue
         try:
             return ImageFont.truetype(path, size=size)
         except Exception:

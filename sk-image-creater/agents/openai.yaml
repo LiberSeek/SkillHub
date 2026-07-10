@@ -1,0 +1,4 @@
+interface:
+  display_name: "SK Image Creater"
+  short_description: "Generate images through an OpenAI-compatible image API."
+  default_prompt: "Generate an image with the configured OpenAI-compatible image API."

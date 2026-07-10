@@ -1,0 +1,14 @@
+.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.tmp
+
+# Local workspace index, keep locally but do not publish
+manifest.md
+
+# Generated artifacts
+sk-image-creater/generated-images/

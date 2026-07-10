@@ -40,6 +40,23 @@ ACCENTS = {
     "mint": (106, 237, 193),
 }
 
+HEAVY_FONT_ENV = "CONTENT_DESIGNER_HEAVY_FONT"
+HEAVY_FONT_CANDIDATES = [
+    os.environ.get(HEAVY_FONT_ENV, ""),
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
+
+REGULAR_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
+
 
 @dataclass(frozen=True)
 class ToolCard:
@@ -74,20 +91,12 @@ class TopicSpec:
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     if bold:
-        candidates = [
-            "/Users/raven/Library/Fonts/_思源黑体SourceHanSansCN-Heavy.otf",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/STHeiti Medium.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        ]
+        candidates = HEAVY_FONT_CANDIDATES
     else:
-        candidates = [
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/STHeiti Light.ttc",
-            "/System/Library/Fonts/Supplemental/Songti.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        ]
+        candidates = REGULAR_FONT_CANDIDATES
     for path in candidates:
+        if not path:
+            continue
         try:
             return ImageFont.truetype(path, size=size)
         except Exception:

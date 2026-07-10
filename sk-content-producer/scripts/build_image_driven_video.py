@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,7 +11,24 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
-DEFAULT_FONT = Path("/Users/raven/Library/Fonts/_思源黑体SourceHanSansCN-Heavy.otf")
+FONT_ENV = "CONTENT_PRODUCER_FONT"
+DEFAULT_FONT_CANDIDATES = [
+    os.environ.get(FONT_ENV, ""),
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
+
+
+def resolve_default_font() -> Path:
+    for candidate in DEFAULT_FONT_CANDIDATES:
+        if candidate and Path(candidate).exists():
+            return Path(candidate)
+    return Path("/System/Library/Fonts/Hiragino Sans GB.ttc")
+
+
+DEFAULT_FONT = resolve_default_font()
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:

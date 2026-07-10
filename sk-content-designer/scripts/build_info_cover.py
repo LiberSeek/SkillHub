@@ -2,12 +2,31 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 
-FONT_PATH = Path("/Users/raven/Library/Fonts/_思源黑体SourceHanSansCN-Heavy.otf")
+FONT_ENV = "CONTENT_DESIGNER_HEAVY_FONT"
+FONT_CANDIDATES = [
+    os.environ.get(FONT_ENV, ""),
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
+
+
+def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for path in FONT_CANDIDATES:
+        if not path:
+            continue
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
 def rounded_rect(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], radius: int, fill, outline=None, width: int = 1) -> None:
@@ -39,9 +58,9 @@ def draw_card(
     rounded_rect(draw, (x, y, x + w, y + h), radius=28, fill=(13, 18, 25, 205), outline=accent + (220,), width=3)
     rounded_rect(draw, (x, y, x + 18, y + h), radius=20, fill=accent + (255,))
 
-    index_font = ImageFont.truetype(str(font_path), 34)
-    title_font = ImageFont.truetype(str(font_path), 44)
-    body_font = ImageFont.truetype(str(font_path), 27)
+    index_font = load_font(34)
+    title_font = load_font(44)
+    body_font = load_font(27)
 
     draw.text((x + 38, y + 26), index_text, font=index_font, fill=(255, 255, 255, 235))
     draw.text((x + 38, y + 72), title, font=title_font, fill=(255, 255, 255, 255))
@@ -78,9 +97,9 @@ def main() -> None:
         draw.rounded_rectangle((42, 38, 1030, 258), radius=34, fill=(8, 14, 22, 208), outline=(125, 240, 214, 150), width=3)
         draw.rounded_rectangle((66, 62, 286, 116), radius=20, fill=(38, 204, 176, 255))
 
-        badge_font = ImageFont.truetype(str(FONT_PATH), 26)
-        title_font = ImageFont.truetype(str(FONT_PATH), 60)
-        sub_font = ImageFont.truetype(str(FONT_PATH), 28)
+        badge_font = load_font(26)
+        title_font = load_font(60)
+        sub_font = load_font(28)
 
         draw.text((96, 72), "详细拆 3 种计算方式", font=badge_font, fill=(8, 18, 24, 255))
         draw.text((84, 128), "API 中转站价格到底怎么算？", font=title_font, fill=(255, 255, 255, 255))
@@ -106,16 +125,16 @@ def main() -> None:
         base.alpha_composite(sticker, (sticker_x, sticker_y))
 
         draw = ImageDraw.Draw(base)
-        footer_font = ImageFont.truetype(str(FONT_PATH), 24)
+        footer_font = load_font(24)
         rounded_rect(draw, (68, 940, 744, 1014), radius=24, fill=(9, 15, 24, 198), outline=(255, 255, 255, 45), width=2)
         draw.text((98, 964), "用户最该看懂的，是便宜背后的计算逻辑", font=footer_font, fill=(240, 246, 252, 255))
     else:
         draw.rounded_rectangle((42, 40, 1038, 360), radius=38, fill=(8, 14, 22, 204), outline=(125, 240, 214, 150), width=3)
         draw.rounded_rectangle((64, 68, 270, 122), radius=22, fill=(38, 204, 176, 255))
 
-        badge_font = ImageFont.truetype(str(FONT_PATH), 28)
-        title_font = ImageFont.truetype(str(FONT_PATH), 74)
-        sub_font = ImageFont.truetype(str(FONT_PATH), 34)
+        badge_font = load_font(28)
+        title_font = load_font(74)
+        sub_font = load_font(34)
 
         draw.text((96, 79), "详细拆 3 种计算方式", font=badge_font, fill=(8, 18, 24, 255))
         draw.text((86, 150), "API 中转站价格", font=title_font, fill=(255, 255, 255, 255))

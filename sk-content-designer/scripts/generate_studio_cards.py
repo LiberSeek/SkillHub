@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -18,23 +19,32 @@ ACCENTS = {
     "red": (255, 107, 87),
 }
 
+HEAVY_FONT_ENV = "CONTENT_DESIGNER_HEAVY_FONT"
+HEAVY_FONT_CANDIDATES = [
+    os.environ.get(HEAVY_FONT_ENV, ""),
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
+
+REGULAR_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+]
+
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     if bold:
-        candidates = [
-            "/Users/raven/Library/Fonts/_思源黑体SourceHanSansCN-Heavy.otf",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/STHeiti Medium.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        ]
+        candidates = HEAVY_FONT_CANDIDATES
     else:
-        candidates = [
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/STHeiti Light.ttc",
-            "/System/Library/Fonts/Supplemental/Songti.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        ]
+        candidates = REGULAR_FONT_CANDIDATES
     for path in candidates:
+        if not path:
+            continue
         try:
             return ImageFont.truetype(path, size=size)
         except Exception:
@@ -152,7 +162,8 @@ def build_card(spec: dict, card: dict, out_path: Path) -> None:
 
     chip_box = (PADDING, 70, PADDING + 380, 126)
     round_rect(draw, chip_box, 26, fill=(255, 255, 255, 24), outline=(255, 255, 255, 50))
-    draw.text((PADDING + 24, 86), "API 聚合站成本判断", fill=(240, 245, 248), font=mono_font(20))
+    chip_text = str(spec.get("chip", "LiberSeek Studio")).strip()
+    draw.text((PADDING + 24, 86), chip_text, fill=(240, 245, 248), font=mono_font(20))
 
     draw.text((PADDING, 170), spec["title"], fill=(248, 250, 252), font=fit_text(spec["title"], 920, 72, 48, True))
     draw.text((PADDING, 276), spec["subtitle"], fill=(196, 208, 220), font=fit_text(spec["subtitle"], 920, 30, 22, False))
@@ -169,17 +180,17 @@ def build_card(spec: dict, card: dict, out_path: Path) -> None:
 
     number_box = (PADDING + 34, 792, 1088, 950)
     round_rect(draw, number_box, 30, fill=(9, 16, 25, 138), outline=(255, 255, 255, 24))
-    if "250" in card["headline"] or "25" in card["headline"] or "7.5" in card["headline"]:
-        draw.text((PADDING + 76, 838), card["headline"].replace("\n", "  "), fill=accent, font=fit_text(card["headline"].replace("\n", "  "), 900, 74, 48, True))
-    else:
-        draw.text((PADDING + 76, 838), "看真实账单，不看表面标价", fill=accent, font=fit_text("看真实账单，不看表面标价", 900, 58, 38, True))
+    highlight_text = str(card.get("highlight", card["headline"].replace("\n", "  "))).strip()
+    highlight_size = 74 if any(ch.isdigit() for ch in highlight_text) else 58
+    draw.text((PADDING + 76, 838), highlight_text, fill=accent, font=fit_text(highlight_text, 900, highlight_size, 38, True))
 
     body_y = 1012
     draw_wrapped_text(draw, card["body"], (PADDING + 34, body_y), 980, 34, 16, (220, 228, 236), False)
 
     footer_box = (PADDING, 1398, 1128, 1510)
     round_rect(draw, footer_box, 28, fill=(8, 14, 24, 188), outline=(255, 255, 255, 22))
-    draw.text((PADDING + 34, 1432), "结论：别只问多少钱，还要问缓存命中和号池稳定性", fill=(242, 247, 250), font=fit_text("结论：别只问多少钱，还要问缓存命中和号池稳定性", 1000, 28, 20, True))
+    footer_text = str(card.get("footer", spec.get("footer", "结论：把判断收成一句能被记住的话"))).strip()
+    draw.text((PADDING + 34, 1432), footer_text, fill=(242, 247, 250), font=fit_text(footer_text, 1000, 28, 20, True))
 
     bg.alpha_composite(overlay)
     bg.save(out_path)
