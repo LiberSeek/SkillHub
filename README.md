@@ -11,6 +11,7 @@
 | `sk-content-researcher` | 做选题、对标、爆款拆解、热点跟踪和系统研究 |
 | `sk-content-writer` | 写图文稿、口播稿、标题、简介、标签和平台文案 |
 | `sk-content-designer` | 做封面、图文卡片、信息图、贴纸资产、HTML deck 和可编辑 PPTX |
+| `sk-minimal-zine-poster` | 把主题、文章或照片转成留白克制的极简 ZINE 海报并直接生成图片 |
 | `sk-content-producer` | 把文稿转成配音、字幕和视频成片 |
 | `sk-content-publisher` | 管理登录态、检查发布栈并分发到各内容平台 |
 | `sk-image-creater` | 通过 OpenAI-compatible 图像接口生成或编辑图片 |
@@ -57,6 +58,7 @@ ln -s /path/to/SkillHub/sk-content-producer ~/.codex/skills/sk-content-producer
 - “帮我研究一下这个赛道，顺便拆 3 个对标账号”
 - “把这篇内容改写成小红书图文稿，再给我 5 个标题”
 - “基于这篇稿子做一张 3:4 的 Swiss 风封面”
+- “把这篇内容做成一张旧纸质感的极简 ZINE 海报”
 - “把这篇口播稿转成配音、字幕和一个竖屏视频”
 - “检查一下发布栈，然后把这个 bundle 发到 X 和 B 站”
 - “用 OpenAI-compatible 接口给我生成一张封面底图”
@@ -64,6 +66,7 @@ ln -s /path/to/SkillHub/sk-content-producer ~/.codex/skills/sk-content-producer
 如果你希望显式指定 skill，也可以直接在任务中点名，例如：
 
 - “用 `sk-content-researcher` 帮我做这家公司研究”
+- “用 `sk-minimal-zine-poster` 把这句话做成一张 3:4 海报”
 - “用 `sk-content-producer` 把这篇稿子做成视频”
 
 ## 目录约定
