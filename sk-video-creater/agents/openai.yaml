@@ -1,0 +1,4 @@
+interface:
+  display_name: "SK Video Creater"
+  short_description: "Generate videos with HappyHorse, Seedance, or Grok."
+  default_prompt: "Use $sk-video-creater to generate a video with the best configured provider."

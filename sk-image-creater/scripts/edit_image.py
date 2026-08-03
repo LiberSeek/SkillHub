@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate images from reference images with /v1/images/edits."""
+"""Generate images from references with OpenAI-compatible or Gemini APIs."""
 
 from __future__ import annotations
 
@@ -17,10 +17,14 @@ from urllib.request import Request, urlopen
 
 from generate_image import (
     DEFAULT_MODEL,
+    build_gemini_payload,
+    is_gemini_image_model,
     load_env_file,
     load_extra_json,
+    normalize_gemini_endpoint,
     normalize_size,
     request_json,
+    save_gemini_outputs,
     save_outputs,
 )
 
@@ -175,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image", action="append", required=True, help="reference image path; repeat for multiple images")
     parser.add_argument("--image-field", default="image", help="multipart/JSON field name for reference image data")
     parser.add_argument("--size", help="auto, square, portrait, landscape, WIDTHxHEIGHT, ratio, or omit")
+    parser.add_argument("--image-size", help="Gemini resolution tier: 512, 1K, 2K, or 4K")
     parser.add_argument("--n", type=int)
     parser.add_argument("--outdir", default="edited-images")
     parser.add_argument("--extra-json", help="JSON object merged into the request body")
@@ -200,6 +205,25 @@ def main() -> int:
         missing = [str(path) for path in images if not path.exists()]
         if missing:
             raise ValueError(f"reference image not found: {', '.join(missing)}")
+
+        gemini = is_gemini_image_model(args.model)
+        if gemini:
+            if len(images) > 14:
+                raise ValueError("Gemini image models accept at most 14 reference images")
+            if args.n not in {None, 1}:
+                raise ValueError("Gemini image models support only --n 1")
+            endpoint = normalize_gemini_endpoint(args.base_url, args.model)
+            payload = build_gemini_payload(read_prompt(args), args.size, args.image_size, load_extra_json(args.extra_json), images)
+            if args.dry_run:
+                preview = dict(payload)
+                preview["contents"] = [{"parts": [{"text": read_prompt(args)}, {"inlineData": "[base64 image data omitted]"}]}]
+                print(json.dumps({"endpoint": endpoint, "mode": "gemini", "body": preview}, ensure_ascii=False, indent=2))
+                return 0
+            response = request_json(endpoint, args.api_key, payload, args.timeout)
+            saved = save_gemini_outputs(response, Path(args.outdir))
+            for path in saved:
+                print(path.resolve())
+            return 0
 
         if args.json:
             payload = build_json_payload(args, images)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate images with an OpenAI-compatible /v1/images/generations API."""
+"""Generate images with OpenAI-compatible or Gemini image APIs."""
 
 from __future__ import annotations
 
@@ -22,6 +22,12 @@ from urllib.request import Request, urlopen
 DEFAULT_MODEL = "gpt-image-2"
 DEFAULT_SIZE = "auto"
 CONFIG_PATH = Path.home() / ".codex" / "sk-image-creater.env"
+GEMINI_MODELS = {
+    "gemini-3-pro-image",
+    "gemini-3.1-flash-image",
+    "gemini-3.1-flash-lite-image",
+}
+GEMINI_ASPECT_RATIOS = {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"}
 SIZE_ALIASES = {
     "square": "1024x1024",
     "1:1": "1024x1024",
@@ -71,6 +77,31 @@ def normalize_endpoint(base_url: str) -> str:
     return f"{base}/v1/images/generations"
 
 
+def normalize_gemini_model(model: str) -> str:
+    normalized = model.strip()
+    return normalized[: -len("-preview")] if normalized.endswith("-preview") else normalized
+
+
+def is_gemini_image_model(model: str) -> bool:
+    return normalize_gemini_model(model) in GEMINI_MODELS
+
+
+def normalize_gemini_endpoint(base_url: str, model: str) -> str:
+    base = base_url.strip().rstrip("/")
+    if not base:
+        raise ValueError("base URL is empty")
+    marker = "/v1beta/models/"
+    if marker in base:
+        base = base.split(marker, 1)[0]
+    elif base.endswith("/v1beta"):
+        base = base[: -len("/v1beta")]
+    elif "/v1/images/" in base:
+        base = base.split("/v1/images/", 1)[0]
+    elif base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    return f"{base}/v1beta/models/{normalize_gemini_model(model)}:generateContent"
+
+
 def read_prompt(args: argparse.Namespace) -> str:
     if args.prompt_file:
         return Path(args.prompt_file).read_text(encoding="utf-8").strip()
@@ -111,6 +142,52 @@ def normalize_size(value: str | None) -> str | None:
         "--size must be auto, an alias like square/portrait/landscape, "
         "a ratio like 1:1/3:4/4:3, or WIDTHxHEIGHT"
     )
+
+
+def normalize_gemini_aspect_ratio(value: str | None) -> str | None:
+    if value is None or value.strip().lower() in {"", "auto", "auto-size", "omit", "none", "default"}:
+        return None
+    normalized = value.strip().lower().replace("×", "x")
+    aliases = {
+        "square": "1:1", "portrait": "2:3", "vertical": "2:3", "tall": "2:3",
+        "landscape": "3:2", "horizontal": "3:2", "wide": "3:2",
+        "1024x1024": "1:1", "1024x1536": "2:3", "1536x1024": "3:2",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in GEMINI_ASPECT_RATIOS:
+        raise ValueError("Gemini --size must be a supported ratio, such as 1:1, 2:3, or 16:9")
+    return normalized
+
+
+def normalize_gemini_image_size(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if normalized in {"", "AUTO", "OMIT", "NONE", "DEFAULT"}:
+        return None
+    if normalized not in {"512", "1K", "2K", "4K"}:
+        raise ValueError("Gemini --image-size must be one of 512, 1K, 2K, or 4K")
+    return normalized
+
+
+def build_gemini_payload(prompt: str, size: str | None, image_size: str | None, extra: dict[str, Any], images: list[Path] | None = None) -> dict[str, Any]:
+    parts: list[dict[str, Any]] = [{"text": prompt}]
+    for image in images or []:
+        if image.stat().st_size > 20 * 1024 * 1024:
+            raise ValueError(f"Gemini reference image exceeds 20 MB: {image}")
+        parts.append({"inlineData": {"mimeType": mimetypes.guess_type(image.name)[0] or "application/octet-stream", "data": base64.b64encode(image.read_bytes()).decode("ascii")}})
+    image_config: dict[str, Any] = {}
+    aspect_ratio = normalize_gemini_aspect_ratio(size)
+    if aspect_ratio:
+        image_config["aspectRatio"] = aspect_ratio
+    quality = normalize_gemini_image_size(image_size)
+    if quality:
+        image_config["imageSize"] = quality
+    payload: dict[str, Any] = {"contents": [{"parts": parts}]}
+    if image_config:
+        payload["generationConfig"] = {"imageConfig": image_config}
+    payload.update(extra)
+    return payload
 
 
 def request_json(endpoint: str, api_key: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
@@ -208,6 +285,29 @@ def save_outputs(response: dict[str, Any], outdir: Path, timeout: int) -> list[P
     return [path]
 
 
+def save_gemini_outputs(response: dict[str, Any], outdir: Path) -> list[Path]:
+    outdir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    saved: list[Path] = []
+    for candidate in response.get("candidates", []):
+        content = candidate.get("content") if isinstance(candidate, dict) else None
+        if not isinstance(content, dict):
+            continue
+        for part in content.get("parts", []):
+            inline_data = part.get("inlineData") if isinstance(part, dict) else None
+            if not isinstance(inline_data, dict) or not isinstance(inline_data.get("data"), str):
+                continue
+            suffix = suffix_from_mime(inline_data.get("mimeType"))
+            path = outdir / f"image-{stamp}-{len(saved) + 1}{suffix}"
+            path.write_bytes(base64.b64decode(inline_data["data"]))
+            saved.append(path)
+    if saved:
+        return saved
+    path = outdir / f"image-response-{stamp}.json"
+    path.write_text(json.dumps(response, ensure_ascii=False, indent=2), encoding="utf-8")
+    return [path]
+
+
 def build_parser() -> argparse.ArgumentParser:
     load_env_file()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -223,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
             "like 1:1/3:4/4:3, WIDTHxHEIGHT, or omit"
         ),
     )
+    parser.add_argument("--image-size", help="Gemini resolution tier: 512, 1K, 2K, or 4K")
     parser.add_argument("--n", type=int)
     parser.add_argument("--outdir", default="generated-images")
     parser.add_argument("--extra-json", help="JSON object merged into the request body")
@@ -241,24 +342,30 @@ def main() -> int:
         if not args.api_key and not args.dry_run:
             raise ValueError("missing API key; set SK_IMAGE_API_KEY or pass --api-key")
 
-        endpoint = normalize_endpoint(args.base_url)
-        payload: dict[str, Any] = {
-            "model": args.model,
-            "prompt": read_prompt(args),
-        }
-        size = normalize_size(args.size)
-        if size is not None:
-            payload["size"] = size
-        if args.n is not None:
-            payload["n"] = args.n
-        payload.update(load_extra_json(args.extra_json))
+        prompt = read_prompt(args)
+        extra = load_extra_json(args.extra_json)
+        gemini = is_gemini_image_model(args.model)
+        if gemini:
+            if args.n not in {None, 1}:
+                raise ValueError("Gemini image models support only --n 1")
+            endpoint = normalize_gemini_endpoint(args.base_url, args.model)
+            payload = build_gemini_payload(prompt, args.size, args.image_size, extra)
+        else:
+            endpoint = normalize_endpoint(args.base_url)
+            payload = {"model": args.model, "prompt": prompt}
+            size = normalize_size(args.size)
+            if size is not None:
+                payload["size"] = size
+            if args.n is not None:
+                payload["n"] = args.n
+            payload.update(extra)
 
         if args.dry_run:
             print(json.dumps({"endpoint": endpoint, "body": payload}, ensure_ascii=False, indent=2))
             return 0
 
         response = request_json(endpoint, args.api_key, payload, args.timeout)
-        saved = save_outputs(response, Path(args.outdir), args.timeout)
+        saved = save_gemini_outputs(response, Path(args.outdir)) if gemini else save_outputs(response, Path(args.outdir), args.timeout)
         for path in saved:
             print(path.resolve())
         return 0

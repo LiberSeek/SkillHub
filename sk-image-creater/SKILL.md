@@ -1,13 +1,13 @@
 ---
 name: sk-image-creater
-description: Generate images by calling an OpenAI-compatible image generation API endpoint. Use when the user wants Codex to create image assets through a configured custom base URL and API key, especially requests involving /v1/images/generations, gpt-image-2, prompts, image sizes, or OpenAI-like image generation providers.
+description: Generate and edit images through OpenAI-compatible and Gemini image APIs with a configured custom base URL and API key. Use when the user asks for text-to-image or reference-image generation with gpt-image-2, Gemini image models, custom prompts, aspect ratios, resolution tiers, or OpenAI-like and Gemini-compatible providers.
 ---
 
 # SK Image Creater
 
 ## Quick Start
 
-Use `scripts/generate_image.py` to call an OpenAI-compatible image generation endpoint and save returned images locally. Use `scripts/edit_image.py` when the user provides one or more reference images and wants `gpt-image-2` to generate a new image from them.
+Use `scripts/generate_image.py` for text-to-image and `scripts/edit_image.py` for reference-image generation. The scripts automatically select the OpenAI-compatible or Gemini protocol from `--model`.
 
 Before making a request, require the user to configure credentials. Do not invent, expose, or persist API keys in repository files.
 
@@ -50,15 +50,33 @@ python3 /path/to/sk-image-creater/scripts/edit_image.py \
   --outdir ./edited-images
 ```
 
+Gemini image generation:
+
+```bash
+python3 /path/to/sk-image-creater/scripts/generate_image.py \
+  --base-url https://api-direct.boft.ai \
+  --model gemini-3.1-flash-image \
+  --prompt "a lone red maple tree on a misty hill, watercolor" \
+  --size 2:3 \
+  --image-size 2K \
+  --outdir ./generated-images
+```
+
 ## Workflow
 
 1. Confirm the user has configured `SK_IMAGE_BASE_URL` and `SK_IMAGE_API_KEY`, or `~/.codex/sk-image-creater.env`; ask them to provide safe runtime values if missing.
 2. If the user provided reference images, verify the local image paths exist and use `scripts/edit_image.py`; otherwise use `scripts/generate_image.py`.
 3. Translate the user's visual request into a concise image prompt. Preserve the user's intended style, subject, aspect ratio, text requirements, reference-image constraints, and output count.
-4. Run the selected script with `--model`, `--size`, and optional generation parameters.
+4. Run the selected script with `--model`, `--size`, and optional generation parameters. For Gemini, `--size` is the aspect ratio and `--image-size` is the resolution tier.
 5. Return the saved absolute image paths to the user. If the app can render local images, include Markdown image previews with absolute paths.
 
 ## Endpoint Rules
+
+For Gemini image models, the scripts use Google Generative Language protocol:
+
+- `https://host` or `https://host/v1beta` becomes `https://host/v1beta/models/{model}:generateContent`
+- Text-to-image and reference-image generation use the same endpoint; local references are sent as Gemini `inlineData` parts.
+- `gemini-3-pro-image`, `gemini-3.1-flash-image`, and `gemini-3.1-flash-lite-image` are supported. Their `-preview` aliases are normalized to the base model name.
 
 The script normalizes the endpoint from the configured base URL:
 
@@ -97,6 +115,13 @@ Common options:
 - `--n`: number of images when the provider supports it
 - `--outdir`: output directory for generated files
 - `--extra-json`: JSON object merged into the request body for provider-specific options
+
+Gemini-specific options and limits:
+
+- `--size`: `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, or `21:9`; `square`, `portrait`, and `landscape` remain convenient aliases.
+- `--image-size`: `512`, `1K`, `2K`, or `4K`; omit it to use the gateway default.
+- Gemini always returns one image, so `--n` may only be `1`.
+- Reference-image generation supports at most 14 files, each no larger than 20 MB.
 
 Use `--dry-run` to inspect the normalized endpoint and JSON body without sending a request.
 
