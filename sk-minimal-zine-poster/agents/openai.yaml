@@ -1,0 +1,4 @@
+interface:
+  display_name: "LiberSeek Minimal Zine Poster"
+  short_description: "把主题和照片编译成工作室极简 ZINE 海报并直接生成图片"
+  default_prompt: "Use $sk-minimal-zine-poster to create a LiberSeek minimal zine poster from this theme."
