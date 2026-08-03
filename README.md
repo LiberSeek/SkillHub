@@ -14,6 +14,7 @@
 | `sk-content-producer` | 把文稿转成配音、字幕和视频成片 |
 | `sk-content-publisher` | 管理登录态、检查发布栈并分发到各内容平台 |
 | `sk-image-creater` | 通过 OpenAI-compatible 图像接口生成或编辑图片 |
+| `sk-video-creater` | 通过 HappyHorse、Seedance 或 Grok Video API 生成视频 |
 | `sk-industry-researcher` | 做行业研究、价值链梳理和专题型深度调研 |
 
 ## 安装方式
@@ -60,6 +61,7 @@ ln -s /path/to/SkillHub/sk-content-producer ~/.codex/skills/sk-content-producer
 - “把这篇口播稿转成配音、字幕和一个竖屏视频”
 - “检查一下发布栈，然后把这个 bundle 发到 X 和 B 站”
 - “用 OpenAI-compatible 接口给我生成一张封面底图”
+- “用 Seedance 把这张参考图生成一个 5 秒竖屏视频”
 
 如果你希望显式指定 skill，也可以直接在任务中点名，例如：
 
