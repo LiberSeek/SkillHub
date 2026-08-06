@@ -36,6 +36,13 @@ Official references:
 - <https://help.aliyun.com/zh/model-studio/happyhorse-text-to-video-api-reference>
 - <https://help.aliyun.com/zh/model-studio/happyhorse-image-to-video-api-reference>
 
+Compatible gateway variant (for example `https://api.boft.ai`):
+
+- Create: `POST /v1/videos/generations`
+- Query: `GET /v1/videos/generations/{task_id}`
+- Body: `{"model":"happyhorse-1.1-t2v","prompt":"...","duration":5,"aspect_ratio":"16:9","resolution":"720p"}`
+- The response may wrap `id`, `status`, and `result.video_url` under `data`.
+
 ## Seedance
 
 - Default model: `doubao-seedance-2-0-260128`

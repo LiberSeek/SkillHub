@@ -37,6 +37,8 @@ export GROK_VIDEO_BASE_URL="https://api.x.ai"
 
 `SK_VIDEO_API_KEY` and `SK_VIDEO_BASE_URL` override provider-specific values for compatible gateways. For persistent local configuration, use `~/.codex/sk-video-creater.env` with mode `600`; the script loads it automatically.
 
+For OpenAI-compatible HappyHorse gateways such as `https://api.boft.ai`, set `SK_VIDEO_BASE_URL` to the gateway root. The script uses `POST /v1/videos/generations` and polls `GET /v1/videos/generations/{task_id}` for that gateway; Alibaba Cloud's native endpoint remains the default for the standard DashScope hosts.
+
 HappyHorse requires the API key, model, and endpoint to belong to the same Alibaba Cloud region. Prefer a workspace-specific Model Studio domain when available.
 
 ## Generate

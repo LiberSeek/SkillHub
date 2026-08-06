@@ -111,6 +111,58 @@ class VideoCliTests(unittest.TestCase):
         self.assertEqual(payload["parameters"]["resolution"], "720P")
         self.assertEqual(headers.get("x-dashscope-async"), "enable")
 
+    def test_happyhorse_compatible_gateway_flow(self) -> None:
+        class GatewayHandler(MockVideoHandler):
+            provider = "happyhorse-gateway"
+
+            def do_POST(self) -> None:
+                size = int(self.headers.get("Content-Length", "0"))
+                type(self).submitted = json.loads(self.rfile.read(size))
+                self.send_json({"data": {"id": "gw-1", "status": "queued"}})
+
+            def do_GET(self) -> None:
+                if self.path == "/v1/videos/generations/gw-1":
+                    video_url = f"http://127.0.0.1:{self.port}/result.mp4"
+                    self.send_json({"data": {"id": "gw-1", "status": "completed", "result": {"video_url": video_url}}})
+                    return
+                super().do_GET()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), GatewayHandler)
+        GatewayHandler.port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as tempdir:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        "--provider", "happyhorse",
+                        "--base-url", f"http://127.0.0.1:{GatewayHandler.port}/v1",
+                        "--api-key", "test-key",
+                        "--prompt", "A gateway test",
+                        "--duration", "5",
+                        "--ratio", "16:9",
+                        "--resolution", "720p",
+                        "--poll-interval", "0.01",
+                        "--outdir", tempdir,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output_path = Path(result.stdout.strip())
+                self.assertEqual(output_path.read_bytes(), VIDEO_BYTES)
+                self.assertEqual(GatewayHandler.submitted["model"], "happyhorse-1.1-t2v")
+                self.assertEqual(GatewayHandler.submitted["aspect_ratio"], "16:9")
+                self.assertEqual(GatewayHandler.submitted["resolution"], "720p")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_seedance_flow(self) -> None:
         payload, headers = self.run_provider("seedance")
         self.assertEqual(payload["model"], "doubao-seedance-2-0-260128")

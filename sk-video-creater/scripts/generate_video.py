@@ -30,6 +30,7 @@ DEFAULT_BASE_URLS = {
     "seedance": "https://ark.cn-beijing.volces.com",
     "grok-video": "https://api.x.ai",
 }
+HAPPYHORSE_NATIVE_HOSTS = {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}
 PROVIDER_ALIASES = {
     "happy-horse": "happyhorse",
     "happyhorse": "happyhorse",
@@ -184,6 +185,9 @@ def endpoint(base_url: str, provider: str, task_id: str | None = None) -> str:
         raise ValueError("base URL is empty")
 
     if provider == "happyhorse":
+        if happyhorse_gateway(base_url):
+            root = base[:-3] if base.endswith("/v1") else base
+            return f"{root}/v1/videos/generations/{task_id}" if task_id else f"{root}/v1/videos/generations"
         create_path = "/api/v1/services/aigc/video-generation/video-synthesis"
         if create_path in base:
             root = base.split(create_path, 1)[0]
@@ -215,6 +219,14 @@ def endpoint(base_url: str, provider: str, task_id: str | None = None) -> str:
     return f"{root}{videos_path}/{task_id}" if task_id else f"{root}{generations_path}"
 
 
+def happyhorse_gateway(base_url: str) -> bool:
+    """Recognize OpenAI-compatible HappyHorse gateways such as api.boft.ai."""
+    parsed = urlparse(base_url.strip())
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/")
+    return host == "api.boft.ai" or (path.endswith("/v1") and host not in HAPPYHORSE_NATIVE_HOSTS)
+
+
 def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
     prompt = read_prompt(args)
     image = media_source(args.image, provider) if args.image else None
@@ -238,6 +250,17 @@ def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
         payload: dict[str, Any] = {"model": model, "input": input_data}
         if parameters:
             payload["parameters"] = parameters
+        if happyhorse_gateway(args.base_url or os.getenv("SK_VIDEO_BASE_URL") or first_env(BASE_URL_ENV_VARS[provider]) or DEFAULT_BASE_URLS[provider]):
+            gateway_payload: dict[str, Any] = {"model": model, "prompt": prompt}
+            if args.duration is not None:
+                gateway_payload["duration"] = args.duration
+            if ratio:
+                gateway_payload["aspect_ratio"] = ratio
+            if resolution:
+                gateway_payload["resolution"] = resolution.lower()
+            if image:
+                gateway_payload["images"] = [image]
+            payload = gateway_payload
     elif provider == "seedance":
         model = model or DEFAULT_MODELS[provider]
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
@@ -319,6 +342,24 @@ def task_info(provider: str, response: dict[str, Any]) -> tuple[str | None, str 
     return response.get("request_id"), response.get("status"), video.get("url")
 
 
+def gateway_task_info(response: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """Read the common /v1/videos/generations response envelope."""
+    nodes: list[dict[str, Any]] = []
+    for value in (response, response.get("data"), response.get("detail"), response.get("result")):
+        if isinstance(value, dict):
+            nodes.append(value)
+    task_id = status = video_url = None
+    for node in nodes:
+        task_id = task_id or node.get("task_id") or node.get("taskId") or node.get("id")
+        status = status or node.get("status") or node.get("task_status")
+        result = node.get("result") if isinstance(node.get("result"), dict) else node
+        video_url = video_url or node.get("url") or result.get("video_url")
+        if not video_url and isinstance(result.get("videos"), list) and result["videos"]:
+            first = result["videos"][0]
+            video_url = first.get("url") if isinstance(first, dict) else first
+    return task_id, status, video_url
+
+
 def error_summary(response: dict[str, Any]) -> str:
     error = response.get("error")
     if isinstance(error, dict):
@@ -342,14 +383,19 @@ def poll_task(
     last_status: str | None = None
     while True:
         response = request_json(endpoint(base_url, provider, task_id), api_key, provider, request_timeout)
-        _, raw_status, video_url = task_info(provider, response)
+        if provider == "happyhorse" and happyhorse_gateway(base_url):
+            _, raw_status, video_url = gateway_task_info(response)
+        else:
+            _, raw_status, video_url = task_info(provider, response)
         status = str(raw_status).upper() if raw_status is not None else None
         if status != last_status:
             print(f"{provider} task {task_id}: {status or 'status unavailable'}", file=sys.stderr)
             last_status = status
-        if status in SUCCESS_STATUSES[provider]:
+        success_statuses = {"COMPLETED", "COMPLETE", "DONE", "FINISHED", "SUCCESS", "SUCCEED", "SUCCEEDED", "READY"} if provider == "happyhorse" and happyhorse_gateway(base_url) else SUCCESS_STATUSES[provider]
+        failure_statuses = {"FAILED", "FAILURE", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"} if provider == "happyhorse" and happyhorse_gateway(base_url) else FAILURE_STATUSES[provider]
+        if status in success_statuses:
             return response, video_url
-        if status in FAILURE_STATUSES[provider]:
+        if status in failure_statuses:
             raise RuntimeError(f"{provider} task {task_id} ended as {status}: {error_summary(response)}")
         if status is None:
             raise RuntimeError(f"{provider} task response has no status: {error_summary(response)}")
@@ -463,7 +509,10 @@ def main() -> int:
                 names = ", ".join(("SK_VIDEO_API_KEY",) + API_KEY_ENV_VARS[provider])
                 raise ValueError(f"missing API key; set one of {names} or pass --api-key")
             response = request_json(endpoint(base_url, provider), api_key, provider, args.request_timeout, payload)
-            task_id, _, immediate_url = task_info(provider, response)
+            if provider == "happyhorse" and happyhorse_gateway(base_url):
+                task_id, _, immediate_url = gateway_task_info(response)
+            else:
+                task_id, _, immediate_url = task_info(provider, response)
             if not task_id:
                 raise RuntimeError(f"{provider} create response has no task ID: {error_summary(response)}")
             if args.submit_only:
