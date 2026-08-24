@@ -1,4 +1,4 @@
 interface:
   display_name: "SK Image Creater"
-  short_description: "Generate images through OpenAI-compatible or Gemini APIs."
-  default_prompt: "Use $sk-image-creater to generate an image with the configured OpenAI-compatible or Gemini image API."
+  short_description: "Generate images through OpenAI-compatible, Grok Imagine, or Gemini APIs."
+  default_prompt: "Use $sk-image-creater to generate an image with the configured OpenAI-compatible, Grok Imagine, or Gemini image API."

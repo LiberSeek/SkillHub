@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate images with OpenAI-compatible or Gemini image APIs."""
+"""Generate images with OpenAI-compatible, Grok, or Gemini image APIs."""
 
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ GEMINI_MODELS = {
     "gemini-3-pro-image",
     "gemini-3.1-flash-image",
     "gemini-3.1-flash-lite-image",
+}
+GROK_MODELS = {
+    "grok-imagine-image",
+    "grok-imagine-image-quality",
 }
 GEMINI_ASPECT_RATIOS = {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"}
 SIZE_ALIASES = {
@@ -84,6 +88,22 @@ def normalize_gemini_model(model: str) -> str:
 
 def is_gemini_image_model(model: str) -> bool:
     return normalize_gemini_model(model) in GEMINI_MODELS
+
+
+def normalize_grok_model(model: str) -> str:
+    return model.strip()
+
+
+def is_grok_image_model(model: str) -> bool:
+    return normalize_grok_model(model) in GROK_MODELS
+
+
+def protocol_mode(model: str) -> str:
+    if is_gemini_image_model(model):
+        return "gemini"
+    if is_grok_image_model(model):
+        return "grok"
+    return "openai-compatible"
 
 
 def normalize_gemini_endpoint(base_url: str, model: str) -> str:
@@ -344,8 +364,8 @@ def main() -> int:
 
         prompt = read_prompt(args)
         extra = load_extra_json(args.extra_json)
-        gemini = is_gemini_image_model(args.model)
-        if gemini:
+        mode = protocol_mode(args.model)
+        if mode == "gemini":
             if args.n not in {None, 1}:
                 raise ValueError("Gemini image models support only --n 1")
             endpoint = normalize_gemini_endpoint(args.base_url, args.model)
@@ -361,11 +381,11 @@ def main() -> int:
             payload.update(extra)
 
         if args.dry_run:
-            print(json.dumps({"endpoint": endpoint, "body": payload}, ensure_ascii=False, indent=2))
+            print(json.dumps({"endpoint": endpoint, "mode": mode, "body": payload}, ensure_ascii=False, indent=2))
             return 0
 
         response = request_json(endpoint, args.api_key, payload, args.timeout)
-        saved = save_gemini_outputs(response, Path(args.outdir)) if gemini else save_outputs(response, Path(args.outdir), args.timeout)
+        saved = save_gemini_outputs(response, Path(args.outdir)) if mode == "gemini" else save_outputs(response, Path(args.outdir), args.timeout)
         for path in saved:
             print(path.resolve())
         return 0

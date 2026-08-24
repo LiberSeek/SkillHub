@@ -1,13 +1,13 @@
 ---
 name: sk-image-creater
-description: Generate and edit images through OpenAI-compatible and Gemini image APIs with a configured custom base URL and API key. Use when the user asks for text-to-image or reference-image generation with gpt-image-2, Gemini image models, custom prompts, aspect ratios, resolution tiers, or OpenAI-like and Gemini-compatible providers.
+description: Generate and edit images through OpenAI-compatible, Grok Imagine, and Gemini image APIs with a configured custom base URL and API key. Use when the user asks for text-to-image or reference-image generation with gpt-image-2, grok-imagine-image, grok-imagine-image-quality, Gemini image models, custom prompts, aspect ratios, resolution tiers, or OpenAI-like and Gemini-compatible providers.
 ---
 
 # SK Image Creater
 
 ## Quick Start
 
-Use `scripts/generate_image.py` for text-to-image and `scripts/edit_image.py` for reference-image generation. The scripts automatically select the OpenAI-compatible or Gemini protocol from `--model`.
+Use `scripts/generate_image.py` for text-to-image and `scripts/edit_image.py` for reference-image generation. The scripts automatically select the OpenAI-compatible, Grok Imagine, or Gemini protocol from `--model`.
 
 Before making a request, require the user to configure credentials. Do not invent, expose, or persist API keys in repository files.
 
@@ -62,6 +62,26 @@ python3 /path/to/sk-image-creater/scripts/generate_image.py \
   --outdir ./generated-images
 ```
 
+Grok Imagine image generation:
+
+```bash
+python3 /path/to/sk-image-creater/scripts/generate_image.py \
+  --model grok-imagine-image \
+  --prompt "a cinematic product photo of a translucent orange mechanical keyboard" \
+  --size landscape \
+  --outdir ./generated-images
+```
+
+High-quality Grok Imagine generation:
+
+```bash
+python3 /path/to/sk-image-creater/scripts/generate_image.py \
+  --model grok-imagine-image-quality \
+  --prompt "a detailed editorial portrait with soft studio lighting" \
+  --size portrait \
+  --outdir ./generated-images
+```
+
 ## Workflow
 
 1. Confirm the user has configured `SK_IMAGE_BASE_URL` and `SK_IMAGE_API_KEY`, or `~/.codex/sk-image-creater.env`; ask them to provide safe runtime values if missing.
@@ -77,6 +97,13 @@ For Gemini image models, the scripts use Google Generative Language protocol:
 - `https://host` or `https://host/v1beta` becomes `https://host/v1beta/models/{model}:generateContent`
 - Text-to-image and reference-image generation use the same endpoint; local references are sent as Gemini `inlineData` parts.
 - `gemini-3-pro-image`, `gemini-3.1-flash-image`, and `gemini-3.1-flash-lite-image` are supported. Their `-preview` aliases are normalized to the base model name.
+
+For Grok Imagine image models, the scripts use the OpenAI-compatible image protocol:
+
+- `grok-imagine-image` and `grok-imagine-image-quality` are explicitly supported.
+- Text-to-image uses `/v1/images/generations` with JSON fields such as `model`, `prompt`, `size`, `n`, and any `--extra-json` values.
+- Reference-image generation uses `/v1/images/edits` with multipart form data by default, or JSON image data when `--json` is set. Confirm that the configured Grok-compatible provider supports edits before using reference images.
+- `grok-imagine-image-quality` is the high-quality model variant; use provider-supported `--extra-json` fields for any additional quality, style, or response-format options.
 
 The script normalizes the endpoint from the configured base URL:
 
@@ -109,7 +136,7 @@ For `/v1/images/edits`, the default request is `multipart/form-data` with one or
 
 Common options:
 
-- `--model`: default `gpt-image-2`
+- `--model`: default `gpt-image-2`; explicitly supported models include `gpt-image-2`, `grok-imagine-image`, `grok-imagine-image-quality`, `gemini-3-pro-image`, `gemini-3.1-flash-image`, and `gemini-3.1-flash-lite-image`
 - `--prompt`: required unless using `--prompt-file`
 - `--size`: default `auto` for `gpt-image-2` style APIs; accepts `auto`, `square`, `portrait`, `landscape`, common ratios such as `1:1`, `3:4`, `4:3`, or any provider-supported `WIDTHxHEIGHT`
 - `--n`: number of images when the provider supports it
@@ -122,6 +149,12 @@ Gemini-specific options and limits:
 - `--image-size`: `512`, `1K`, `2K`, or `4K`; omit it to use the gateway default.
 - Gemini always returns one image, so `--n` may only be `1`.
 - Reference-image generation supports at most 14 files, each no larger than 20 MB.
+
+Grok-specific notes:
+
+- Grok Imagine uses the OpenAI-compatible size normalization rules below.
+- If the provider has model-specific constraints for `--n`, `--size`, or edits, the API response is authoritative; pass provider-specific fields with `--extra-json`.
+- Use `grok-imagine-image-quality` when the user asks for the higher-quality Grok Imagine variant.
 
 Use `--dry-run` to inspect the normalized endpoint and JSON body without sending a request.
 

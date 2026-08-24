@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate images from references with OpenAI-compatible or Gemini APIs."""
+"""Generate images from references with OpenAI-compatible, Grok, or Gemini APIs."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from generate_image import (
     load_extra_json,
     normalize_gemini_endpoint,
     normalize_size,
+    protocol_mode,
     request_json,
     save_gemini_outputs,
     save_outputs,
@@ -206,8 +207,8 @@ def main() -> int:
         if missing:
             raise ValueError(f"reference image not found: {', '.join(missing)}")
 
-        gemini = is_gemini_image_model(args.model)
-        if gemini:
+        mode = protocol_mode(args.model)
+        if mode == "gemini":
             if len(images) > 14:
                 raise ValueError("Gemini image models accept at most 14 reference images")
             if args.n not in {None, 1}:
@@ -230,7 +231,7 @@ def main() -> int:
             if args.dry_run:
                 preview = dict(payload)
                 preview[args.image_field] = "[base64 image data omitted]"
-                print(json.dumps({"endpoint": endpoint, "mode": "json", "body": preview}, ensure_ascii=False, indent=2))
+                print(json.dumps({"endpoint": endpoint, "mode": f"{mode}-json", "body": preview}, ensure_ascii=False, indent=2))
                 return 0
             response = request_json(endpoint, args.api_key, payload, args.timeout)
         else:
@@ -240,7 +241,7 @@ def main() -> int:
                     json.dumps(
                         {
                             "endpoint": endpoint,
-                            "mode": "multipart",
+                            "mode": f"{mode}-multipart",
                             "fields": fields,
                             "images": summarize_images(images),
                             "image_field": args.image_field,
