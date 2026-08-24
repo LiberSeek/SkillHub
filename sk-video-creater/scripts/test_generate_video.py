@@ -39,7 +39,7 @@ class MockVideoHandler(BaseHTTPRequestHandler):
         size = int(self.headers.get("Content-Length", "0"))
         type(self).submitted = json.loads(self.rfile.read(size))
         type(self).headers_seen = dict(self.headers)
-        if self.provider == "happyhorse":
+        if self.provider in {"happyhorse", "wan"}:
             self.send_json({"output": {"task_id": "hh-1", "task_status": "PENDING"}})
         elif self.provider == "seedance":
             self.send_json({"id": "seed-1", "status": "queued"})
@@ -55,7 +55,7 @@ class MockVideoHandler(BaseHTTPRequestHandler):
             self.wfile.write(VIDEO_BYTES)
             return
         video_url = f"http://127.0.0.1:{self.port}/result.mp4"
-        if self.provider == "happyhorse":
+        if self.provider in {"happyhorse", "wan"}:
             self.send_json({"output": {"task_id": "hh-1", "task_status": "SUCCEEDED", "video_url": video_url}})
         elif self.provider == "seedance":
             self.send_json({"id": "seed-1", "status": "succeeded", "content": {"video_url": video_url}})
@@ -93,12 +93,11 @@ class VideoCliTests(unittest.TestCase):
                     "0.01",
                     "--outdir",
                     tempdir,
+                    "--no-download",
                 ]
                 result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                output_path = Path(result.stdout.strip())
-                self.assertTrue(output_path.is_file())
-                self.assertEqual(output_path.read_bytes(), VIDEO_BYTES)
+                self.assertTrue(result.stdout.strip().startswith("http://127.0.0.1:"))
                 return handler.submitted, {key.lower(): value for key, value in handler.headers_seen.items()}
         finally:
             server.shutdown()
@@ -110,6 +109,74 @@ class VideoCliTests(unittest.TestCase):
         self.assertEqual(payload["model"], "happyhorse-1.1-t2v")
         self.assertEqual(payload["parameters"]["resolution"], "720P")
         self.assertEqual(headers.get("x-dashscope-async"), "enable")
+
+    def test_wan_flow(self) -> None:
+        payload, headers = self.run_provider("wan")
+        self.assertEqual(payload["model"], "wan3.0-video")
+        self.assertEqual(payload["parameters"]["resolution"], "720P")
+        self.assertEqual(headers.get("x-dashscope-async"), "enable")
+
+    def test_wan_gateway_supports_adaptive_ratio_and_api_direct(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--provider", "wan",
+                "--base-url", "https://api-direct.boft.ai/v1",
+                "--model", "wan3.0-video-prime",
+                "--prompt", "A gateway test",
+                "--duration", "5",
+                "--ratio", "adaptive",
+                "--resolution", "480p",
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["create_endpoint"], "https://api-direct.boft.ai/v1/videos/generations")
+        self.assertEqual(preview["query_endpoint_template"], "https://api-direct.boft.ai/v1/videos/generations/{task_id}")
+        self.assertEqual(preview["body"]["model"], "wan3.0-video-prime")
+        self.assertEqual(preview["body"]["aspect_ratio"], "adaptive")
+        self.assertEqual(preview["body"]["resolution"], "480p")
+
+    def test_wan_gateway_accepts_full_create_endpoint_and_media_image(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable, str(SCRIPT),
+                "--provider", "wan",
+                "--base-url", "https://api.boft.ai/v1/videos/generations",
+                "--prompt", "A gateway image test",
+                "--image", "https://example.com/first.png",
+                "--duration", "30",
+                "--ratio", "adaptive",
+                "--resolution", "480p",
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["create_endpoint"], "https://api.boft.ai/v1/videos/generations")
+        self.assertEqual(preview["query_endpoint_template"], "https://api.boft.ai/v1/videos/generations/{task_id}")
+        self.assertEqual(preview["body"]["media"], [{"type": "first_frame", "url": "https://example.com/first.png"}])
+
+    def test_ratio_validation_is_provider_specific(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--provider", "grok-video", "--prompt", "A test", "--ratio", "adaptive", "--dry-run"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not support adaptive", result.stderr)
 
     def test_happyhorse_compatible_gateway_flow(self) -> None:
         class GatewayHandler(MockVideoHandler):
@@ -146,6 +213,7 @@ class VideoCliTests(unittest.TestCase):
                         "--resolution", "720p",
                         "--poll-interval", "0.01",
                         "--outdir", tempdir,
+                        "--no-download",
                     ],
                     capture_output=True,
                     text=True,
@@ -153,8 +221,7 @@ class VideoCliTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
-                output_path = Path(result.stdout.strip())
-                self.assertEqual(output_path.read_bytes(), VIDEO_BYTES)
+                self.assertTrue(result.stdout.strip().startswith("http://127.0.0.1:"))
                 self.assertEqual(GatewayHandler.submitted["model"], "happyhorse-1.1-t2v")
                 self.assertEqual(GatewayHandler.submitted["aspect_ratio"], "16:9")
                 self.assertEqual(GatewayHandler.submitted["resolution"], "720p")
@@ -195,6 +262,18 @@ class VideoCliTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("between 1 and 15 seconds", result.stderr)
+
+    def test_download_rejects_private_result_url(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("generate_video", SCRIPT)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tempdir:
+            with self.assertRaisesRegex(RuntimeError, "private or reserved"):
+                module.download_video("http://127.0.0.1/result.mp4", Path(tempdir), "wan", "task-1", 1)
 
 
 if __name__ == "__main__":

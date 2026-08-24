@@ -1,39 +1,49 @@
 #!/usr/bin/env python3
-"""Generate videos with HappyHorse, Seedance, or Grok Video APIs."""
+"""Generate videos with Alibaba DashScope (HappyHorse/Wan), Seedance, or Grok Video APIs."""
 
 from __future__ import annotations
 
 import argparse
 import base64
 import json
+import ipaddress
 import mimetypes
 import os
 import re
 import shlex
+import socket
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse, urlunparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 
 CONFIG_PATH = Path.home() / ".codex" / "sk-video-creater.env"
 DEFAULT_MODELS = {
     "happyhorse": "happyhorse-1.1-t2v",
+    "wan": "wan3.0-video",
     "seedance": "doubao-seedance-2-0-260128",
     "grok-video": "grok-imagine-video-1.5",
 }
 DEFAULT_BASE_URLS = {
     "happyhorse": "https://dashscope.aliyuncs.com",
+    "wan": "https://dashscope.aliyuncs.com",
     "seedance": "https://ark.cn-beijing.volces.com",
     "grok-video": "https://api.x.ai",
 }
-HAPPYHORSE_NATIVE_HOSTS = {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}
+DASHSCOPE_NATIVE_HOSTS = {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"}
+BOFT_GATEWAY_HOSTS = {"api.boft.ai", "api-direct.boft.ai"}
+MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_VIDEO_DOWNLOAD_BYTES = 512 * 1024 * 1024
 PROVIDER_ALIASES = {
     "happy-horse": "happyhorse",
     "happyhorse": "happyhorse",
+    "wan": "wan",
+    "wan-video": "wan",
     "seedance": "seedance",
     "grok": "grok-video",
     "grok-video": "grok-video",
@@ -41,24 +51,32 @@ PROVIDER_ALIASES = {
 }
 API_KEY_ENV_VARS = {
     "happyhorse": ("HAPPYHORSE_API_KEY", "DASHSCOPE_API_KEY"),
+    "wan": ("WAN_API_KEY", "DASHSCOPE_API_KEY", "HAPPYHORSE_API_KEY"),
     "seedance": ("SEEDANCE_API_KEY", "ARK_API_KEY"),
     "grok-video": ("GROK_VIDEO_API_KEY", "XAI_API_KEY"),
 }
 BASE_URL_ENV_VARS = {
     "happyhorse": ("HAPPYHORSE_BASE_URL",),
+    "wan": ("WAN_BASE_URL", "HAPPYHORSE_BASE_URL"),
     "seedance": ("SEEDANCE_BASE_URL", "ARK_BASE_URL"),
     "grok-video": ("GROK_VIDEO_BASE_URL", "XAI_BASE_URL"),
 }
 SUCCESS_STATUSES = {
     "happyhorse": {"SUCCEEDED"},
+    "wan": {"SUCCEEDED"},
     "seedance": {"SUCCEEDED"},
     "grok-video": {"DONE"},
 }
 FAILURE_STATUSES = {
     "happyhorse": {"FAILED", "CANCELED", "CANCELLED", "UNKNOWN"},
+    "wan": {"FAILED", "CANCELED", "CANCELLED", "UNKNOWN"},
     "seedance": {"FAILED", "CANCELED", "CANCELLED", "EXPIRED"},
     "grok-video": {"FAILED", "EXPIRED", "CANCELED", "CANCELLED"},
 }
+
+
+def is_dashscope_video_provider(provider: str) -> bool:
+    return provider in {"happyhorse", "wan"}
 
 
 def load_env_file(path: Path = CONFIG_PATH) -> None:
@@ -144,10 +162,10 @@ def normalize_resolution(value: str | None, provider: str) -> str | None:
     normalized = value.strip().lower()
     if normalized not in {"480p", "720p", "1080p"}:
         raise ValueError("--resolution must be 480p, 720p, or 1080p")
-    return normalized.upper() if provider == "happyhorse" else normalized
+    return normalized.upper() if is_dashscope_video_provider(provider) else normalized
 
 
-def normalize_ratio(value: str | None) -> str | None:
+def normalize_ratio(value: str | None, provider: str | None = None) -> str | None:
     if not value:
         return None
     aliases = {
@@ -158,8 +176,17 @@ def normalize_ratio(value: str | None) -> str | None:
         "square": "1:1",
     }
     normalized = aliases.get(value.strip().lower(), value.strip())
+    allowed = {"16:9", "9:16", "1:1"}
+    if provider == "wan":
+        allowed.add("adaptive")
+    if normalized.lower() == "adaptive":
+        if provider not in (None, "wan"):
+            raise ValueError(f"{provider} does not support adaptive ratio")
+        return "adaptive"
     if not re.fullmatch(r"\d{1,2}:\d{1,2}", normalized):
-        raise ValueError("--ratio must be a ratio such as 16:9, 9:16, or 1:1")
+        raise ValueError("--ratio must be adaptive or a ratio such as 16:9, 9:16, or 1:1")
+    if normalized not in allowed and provider is not None:
+        raise ValueError(f"{provider} supports only {', '.join(sorted(allowed))}")
     width, height = (int(part) for part in normalized.split(":"))
     if width == 0 or height == 0:
         raise ValueError("--ratio components must be positive")
@@ -172,8 +199,8 @@ def media_source(value: str, provider: str) -> str:
     path = Path(value).expanduser()
     if not path.is_file():
         raise ValueError(f"reference image not found: {path}")
-    if provider == "happyhorse":
-        raise ValueError("HappyHorse requires a reachable image URL; upload the local image and pass its URL")
+    if is_dashscope_video_provider(provider):
+        raise ValueError("DashScope video models require a reachable image URL; upload the local image and pass its URL")
     mime_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
@@ -184,10 +211,19 @@ def endpoint(base_url: str, provider: str, task_id: str | None = None) -> str:
     if not base:
         raise ValueError("base URL is empty")
 
-    if provider == "happyhorse":
-        if happyhorse_gateway(base_url):
-            root = base[:-3] if base.endswith("/v1") else base
-            return f"{root}/v1/videos/generations/{task_id}" if task_id else f"{root}/v1/videos/generations"
+    if is_dashscope_video_provider(provider):
+        if dashscope_gateway(base_url):
+            generations_path = "/v1/videos/generations"
+            parsed = urlparse(base)
+            path = parsed.path.rstrip("/")
+            if path.endswith(generations_path):
+                root_path = path[: -len(generations_path)]
+            elif path.endswith("/v1"):
+                root_path = path[:-3]
+            else:
+                root_path = path
+            root = urlunparse((parsed.scheme, parsed.netloc, root_path.rstrip("/"), "", "", ""))
+            return f"{root}{generations_path}/{task_id}" if task_id else f"{root}{generations_path}"
         create_path = "/api/v1/services/aigc/video-generation/video-synthesis"
         if create_path in base:
             root = base.split(create_path, 1)[0]
@@ -219,24 +255,29 @@ def endpoint(base_url: str, provider: str, task_id: str | None = None) -> str:
     return f"{root}{videos_path}/{task_id}" if task_id else f"{root}{generations_path}"
 
 
-def happyhorse_gateway(base_url: str) -> bool:
-    """Recognize OpenAI-compatible HappyHorse gateways such as api.boft.ai."""
+def dashscope_gateway(base_url: str) -> bool:
+    """Recognize BOFT-compatible DashScope gateways."""
     parsed = urlparse(base_url.strip())
     host = (parsed.hostname or "").lower()
     path = parsed.path.rstrip("/")
-    return host == "api.boft.ai" or (path.endswith("/v1") and host not in HAPPYHORSE_NATIVE_HOSTS)
+    return host in BOFT_GATEWAY_HOSTS or (path.endswith("/v1") and host not in DASHSCOPE_NATIVE_HOSTS)
+
+
+def happyhorse_gateway(base_url: str) -> bool:
+    """Backward-compatible alias for callers importing the old helper."""
+    return dashscope_gateway(base_url)
 
 
 def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
     prompt = read_prompt(args)
     image = media_source(args.image, provider) if args.image else None
-    ratio = normalize_ratio(args.ratio)
+    ratio = normalize_ratio(args.ratio, provider)
     resolution = normalize_resolution(args.resolution, provider)
     model = args.model
 
-    if provider == "happyhorse":
+    if is_dashscope_video_provider(provider):
         if not model:
-            model = "happyhorse-1.1-i2v" if image else DEFAULT_MODELS[provider]
+            model = "happyhorse-1.1-i2v" if provider == "happyhorse" and image else DEFAULT_MODELS[provider]
         input_data: dict[str, Any] = {"prompt": prompt}
         if image:
             input_data["media"] = [{"type": "first_frame", "url": image}]
@@ -250,7 +291,7 @@ def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
         payload: dict[str, Any] = {"model": model, "input": input_data}
         if parameters:
             payload["parameters"] = parameters
-        if happyhorse_gateway(args.base_url or os.getenv("SK_VIDEO_BASE_URL") or first_env(BASE_URL_ENV_VARS[provider]) or DEFAULT_BASE_URLS[provider]):
+        if dashscope_gateway(args.base_url or os.getenv("SK_VIDEO_BASE_URL") or first_env(BASE_URL_ENV_VARS[provider]) or DEFAULT_BASE_URLS[provider]):
             gateway_payload: dict[str, Any] = {"model": model, "prompt": prompt}
             if args.duration is not None:
                 gateway_payload["duration"] = args.duration
@@ -259,7 +300,7 @@ def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
             if resolution:
                 gateway_payload["resolution"] = resolution.lower()
             if image:
-                gateway_payload["images"] = [image]
+                gateway_payload["media"] = [{"type": "first_frame", "url": image}]
             payload = gateway_payload
     elif provider == "seedance":
         model = model or DEFAULT_MODELS[provider]
@@ -294,7 +335,7 @@ def request_headers(provider: str, api_key: str) -> dict[str, str]:
         "Content-Type": "application/json",
         "User-Agent": "sk-video-creater/1.0",
     }
-    if provider == "happyhorse":
+    if is_dashscope_video_provider(provider):
         headers["X-DashScope-Async"] = "enable"
     return headers
 
@@ -315,9 +356,9 @@ def request_json(
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+            raw = read_limited_response(response, MAX_JSON_RESPONSE_BYTES).decode("utf-8")
     except HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
+        raw = read_limited_response(exc, MAX_JSON_RESPONSE_BYTES).decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code} from {provider}: {raw[:2000]}") from exc
     except URLError as exc:
         raise RuntimeError(f"failed to reach {provider}: {exc}") from exc
@@ -331,8 +372,22 @@ def request_json(
     return parsed
 
 
+def read_limited_response(response: Any, limit: int) -> bytes:
+    content_length = response.headers.get("Content-Length")
+    if content_length and content_length.isdigit() and int(content_length) > limit:
+        raise RuntimeError(f"response exceeds the {limit} byte limit")
+    data = bytearray()
+    while True:
+        chunk = response.read(min(64 * 1024, limit - len(data) + 1))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) > limit:
+            raise RuntimeError(f"response exceeds the {limit} byte limit")
+
+
 def task_info(provider: str, response: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-    if provider == "happyhorse":
+    if is_dashscope_video_provider(provider):
         output = response.get("output") if isinstance(response.get("output"), dict) else response
         return output.get("task_id"), output.get("task_status"), output.get("video_url")
     if provider == "seedance":
@@ -382,8 +437,16 @@ def poll_task(
     deadline = time.monotonic() + poll_timeout
     last_status: str | None = None
     while True:
-        response = request_json(endpoint(base_url, provider, task_id), api_key, provider, request_timeout)
-        if provider == "happyhorse" and happyhorse_gateway(base_url):
+        try:
+            response = request_json(endpoint(base_url, provider, task_id), api_key, provider, request_timeout)
+        except RuntimeError as exc:
+            if not retryable_poll_error(exc) or time.monotonic() >= deadline:
+                raise
+            delay = min(max(interval, 1.0), 30.0)
+            print(f"{provider} task {task_id}: transient poll error, retrying in {delay:g}s", file=sys.stderr)
+            time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            continue
+        if is_dashscope_video_provider(provider) and dashscope_gateway(base_url):
             _, raw_status, video_url = gateway_task_info(response)
         else:
             _, raw_status, video_url = task_info(provider, response)
@@ -391,8 +454,8 @@ def poll_task(
         if status != last_status:
             print(f"{provider} task {task_id}: {status or 'status unavailable'}", file=sys.stderr)
             last_status = status
-        success_statuses = {"COMPLETED", "COMPLETE", "DONE", "FINISHED", "SUCCESS", "SUCCEED", "SUCCEEDED", "READY"} if provider == "happyhorse" and happyhorse_gateway(base_url) else SUCCESS_STATUSES[provider]
-        failure_statuses = {"FAILED", "FAILURE", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"} if provider == "happyhorse" and happyhorse_gateway(base_url) else FAILURE_STATUSES[provider]
+        success_statuses = {"COMPLETED", "COMPLETE", "DONE", "FINISHED", "SUCCESS", "SUCCEED", "SUCCEEDED", "READY"} if is_dashscope_video_provider(provider) and dashscope_gateway(base_url) else SUCCESS_STATUSES[provider]
+        failure_statuses = {"FAILED", "FAILURE", "ERROR", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"} if is_dashscope_video_provider(provider) and dashscope_gateway(base_url) else FAILURE_STATUSES[provider]
         if status in success_statuses:
             return response, video_url
         if status in failure_statuses:
@@ -404,6 +467,16 @@ def poll_task(
         time.sleep(interval)
 
 
+def retryable_poll_error(error: RuntimeError) -> bool:
+    message = str(error).lower()
+    return (
+        "failed to reach" in message
+        or "timed out" in message
+        or "returned non-json" in message
+        or any(f"http {status}" in message for status in (408, 425, 429, 500, 502, 503, 504))
+    )
+
+
 def suffix_from_response(url: str, content_type: str | None) -> str:
     suffix = Path(urlparse(url).path).suffix
     if suffix and len(suffix) <= 8:
@@ -412,19 +485,78 @@ def suffix_from_response(url: str, content_type: str | None) -> str:
     return ".mp4" if not guessed else guessed
 
 
-def download_video(url: str, outdir: Path, provider: str, task_id: str, timeout: int) -> Path:
-    request = Request(url, headers={"User-Agent": "sk-video-creater/1.0"})
+def validate_download_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise RuntimeError("video result URL must use HTTP(S)")
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname == "localhost" or hostname.endswith(".local"):
+        raise RuntimeError("video result URL points to a local host")
     try:
-        with urlopen(request, timeout=timeout) as response:
-            data = response.read()
-            content_type = response.headers.get("Content-Type")
-    except (HTTPError, URLError) as exc:
-        raise RuntimeError(f"video was generated but download failed: {exc}; URL: {url}") from exc
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        try:
+            port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+            resolved = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"video result URL host could not be resolved: {hostname}") from exc
+        addresses = {item[4][0] for item in resolved}
+        if not addresses:
+            raise RuntimeError(f"video result URL host could not be resolved: {hostname}")
+        for value in addresses:
+            address = ipaddress.ip_address(value)
+            if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved or address.is_multicast or address.is_unspecified:
+                raise RuntimeError("video result URL points to a private or reserved address")
+        return
+    if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved or address.is_multicast or address.is_unspecified:
+        raise RuntimeError("video result URL points to a private or reserved address")
+
+
+class SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req: Request, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Request | None:
+        validate_download_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download_video(url: str, outdir: Path, provider: str, task_id: str, timeout: int) -> Path:
+    validate_download_url(url)
+    request = Request(url, headers={"User-Agent": "sk-video-creater/1.0"})
     outdir.mkdir(parents=True, exist_ok=True)
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", task_id)[:48]
-    suffix = suffix_from_response(url, content_type)
+    suffix = ".mp4"
     path = outdir / f"{provider}-{safe_id}{suffix}"
-    path.write_bytes(data)
+    temporary_path: Path | None = None
+    try:
+        opener = build_opener(SafeRedirectHandler())
+        with opener.open(request, timeout=timeout) as response:
+            validate_download_url(response.geturl())
+            content_type = response.headers.get("Content-Type")
+            media_type = (content_type or "").split(";", 1)[0].strip().lower()
+            if media_type and not media_type.startswith("video/") and media_type != "application/octet-stream":
+                raise RuntimeError(f"video result has unexpected content type: {media_type}")
+            content_length = response.headers.get("Content-Length")
+            if content_length and content_length.isdigit() and int(content_length) > MAX_VIDEO_DOWNLOAD_BYTES:
+                raise RuntimeError(f"video exceeds the {MAX_VIDEO_DOWNLOAD_BYTES} byte limit")
+            suffix = suffix_from_response(response.geturl(), content_type)
+            path = outdir / f"{provider}-{safe_id}{suffix}"
+            with tempfile.NamedTemporaryFile(dir=outdir, prefix=f".{safe_id}-", suffix=".part", delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                total = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_VIDEO_DOWNLOAD_BYTES:
+                        raise RuntimeError(f"video exceeds the {MAX_VIDEO_DOWNLOAD_BYTES} byte limit")
+                    temporary.write(chunk)
+        os.replace(temporary_path, path)
+    except (HTTPError, URLError) as exc:
+        raise RuntimeError(f"video was generated but download failed: {exc}; URL: {url}") from exc
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
     return path.resolve()
 
 
@@ -452,7 +584,7 @@ def resolve_configuration(args: argparse.Namespace, provider: str) -> tuple[str,
 def build_parser() -> argparse.ArgumentParser:
     load_env_file()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", required=True, help="happyhorse, seedance, or grok-video")
+    parser.add_argument("--provider", required=True, help="happyhorse, wan, seedance, or grok-video")
     parser.add_argument("--base-url", help="provider API base URL or full create endpoint")
     parser.add_argument("--api-key", help="runtime API key; prefer environment variables")
     parser.add_argument("--model", help="provider model name; defaults depend on provider and input mode")
@@ -482,6 +614,8 @@ def main() -> int:
             raise ValueError("--duration must be positive")
         if provider == "grok-video" and args.duration is not None and args.duration > 15:
             raise ValueError("Grok Video duration must be between 1 and 15 seconds")
+        if provider == "wan" and args.duration is not None and args.duration > 30:
+            raise ValueError("Wan 3.0 duration must be between 1 and 30 seconds")
         if args.poll_interval <= 0 or args.poll_timeout <= 0 or args.request_timeout <= 0:
             raise ValueError("timeouts and poll interval must be positive")
         if args.task_id and args.submit_only:
@@ -509,7 +643,7 @@ def main() -> int:
                 names = ", ".join(("SK_VIDEO_API_KEY",) + API_KEY_ENV_VARS[provider])
                 raise ValueError(f"missing API key; set one of {names} or pass --api-key")
             response = request_json(endpoint(base_url, provider), api_key, provider, args.request_timeout, payload)
-            if provider == "happyhorse" and happyhorse_gateway(base_url):
+            if is_dashscope_video_provider(provider) and dashscope_gateway(base_url):
                 task_id, _, immediate_url = gateway_task_info(response)
             else:
                 task_id, _, immediate_url = task_info(provider, response)

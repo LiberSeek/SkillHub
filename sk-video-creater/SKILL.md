@@ -1,6 +1,6 @@
 ---
 name: sk-video-creater
-description: Generate AI videos with HappyHorse (Alibaba Cloud Model Studio), Seedance (Volcengine Ark), or Grok Video (xAI). Use for text-to-video, image-to-video, asynchronous video task submission and polling, resuming an existing task, or downloading generated MP4 files when the user mentions HappyHorse, Seedance, Grok Imagine Video, Grok Video, or one of these providers' video models and APIs.
+description: Generate AI videos with Alibaba DashScope Wan/HappyHorse, Seedance (Volcengine Ark), or Grok Video (xAI). Use for text-to-video, image-to-video, asynchronous video task submission and polling, resuming an existing task, or downloading generated MP4 files when the user mentions Wan 3.0, HappyHorse, Seedance, Grok Imagine Video, Grok Video, or one of these providers' video models and APIs.
 ---
 
 # SK Video Creater
@@ -12,6 +12,7 @@ Use `scripts/generate_video.py` for all API calls. It normalizes provider endpoi
 Honor an explicitly requested provider. If none is specified, choose only from providers with configured credentials and state the choice before submitting a paid task.
 
 - Use `happyhorse` for Alibaba Cloud Model Studio HappyHorse text-to-video or first-frame image-to-video.
+- Use `wan` for Alibaba Cloud Model Studio Wan 3.0 text-to-video. The supported models are `wan3.0-video` and `wan3.0-video-prime`; override with `--model` when selecting Prime. Wan supports 1-30 second output durations.
 - Use `seedance` for Volcengine Ark Seedance generation, especially multimodal references or native audio.
 - Use `grok-video` for xAI Grok Imagine Video text-to-video or image-to-video.
 
@@ -31,13 +32,14 @@ Optional provider base URL overrides:
 
 ```bash
 export HAPPYHORSE_BASE_URL="https://dashscope.aliyuncs.com"
+export WAN_BASE_URL="https://dashscope.aliyuncs.com"
 export SEEDANCE_BASE_URL="https://ark.cn-beijing.volces.com"
 export GROK_VIDEO_BASE_URL="https://api.x.ai"
 ```
 
 `SK_VIDEO_API_KEY` and `SK_VIDEO_BASE_URL` override provider-specific values for compatible gateways. For persistent local configuration, use `~/.codex/sk-video-creater.env` with mode `600`; the script loads it automatically.
 
-For OpenAI-compatible HappyHorse gateways such as `https://api.boft.ai`, set `SK_VIDEO_BASE_URL` to the gateway root. The script uses `POST /v1/videos/generations` and polls `GET /v1/videos/generations/{task_id}` for that gateway; Alibaba Cloud's native endpoint remains the default for the standard DashScope hosts.
+For OpenAI-compatible DashScope gateways such as `https://api.boft.ai` or `https://api-direct.boft.ai`, set `SK_VIDEO_BASE_URL` to the gateway root. The script uses `POST /v1/videos/generations` and polls `GET /v1/videos/generations/{task_id}` for that gateway; Alibaba Cloud's native endpoint remains the default for the standard DashScope hosts. Gateway image inputs are normalized to BOFT's `media: [{"type":"first_frame","url":"..."}]` field.
 
 HappyHorse requires the API key, model, and endpoint to belong to the same Alibaba Cloud region. Prefer a workspace-specific Model Studio domain when available.
 
@@ -52,6 +54,20 @@ python3 /path/to/sk-video-creater/scripts/generate_video.py \
   --duration 5 \
   --ratio 16:9 \
   --resolution 720p \
+  --outdir ./generated-videos
+```
+
+Wan 3.0 text-to-video through BOFT:
+
+```bash
+python3 /path/to/sk-video-creater/scripts/generate_video.py \
+  --provider wan \
+  --base-url https://api.boft.ai \
+  --model wan3.0-video \
+  --prompt "一只小猫在月光下的屋顶上奔跑" \
+  --duration 5 \
+  --ratio adaptive \
+  --resolution 480p \
   --outdir ./generated-videos
 ```
 
@@ -87,7 +103,7 @@ Submit without waiting:
 
 ```bash
 python3 /path/to/sk-video-creater/scripts/generate_video.py \
-  --provider happyhorse \
+  --provider wan \
   --prompt "A miniature paper city wakes at night" \
   --submit-only
 ```
@@ -96,7 +112,7 @@ The command prints the task ID. Resume it later without creating another task:
 
 ```bash
 python3 /path/to/sk-video-creater/scripts/generate_video.py \
-  --provider happyhorse \
+  --provider wan \
   --task-id "TASK_ID" \
   --outdir ./generated-videos
 ```

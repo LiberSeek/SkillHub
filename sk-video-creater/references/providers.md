@@ -2,6 +2,34 @@
 
 Read only the section for the selected provider. These schemas describe the native requests used by `scripts/generate_video.py`.
 
+## Wan 3.0
+
+- Provider: `wan` (Alibaba Cloud Model Studio / DashScope)
+- Models: `wan3.0-video` and `wan3.0-video-prime`
+- Default model: `wan3.0-video`
+- Default base URL: `https://dashscope.aliyuncs.com`
+- Native create: `POST /api/v1/services/aigc/video-generation/video-synthesis`
+- Native query: `GET /api/v1/tasks/{task_id}`
+- BOFT gateway create: `POST /v1/videos/generations`
+- BOFT gateway query: `GET /v1/videos/generations/{task_id}`
+- Required native header: `X-DashScope-Async: enable`
+- Use the BOFT response `id` (for example `vidjob_xxx`) when polling a BOFT gateway. `upstream_task_id` is the internal DashScope UUID and is not the BOFT query ID.
+- `resolution`: `480p`, `720p`, or `1080p`; `aspect_ratio`: `adaptive`, `16:9`, `9:16`, or `1:1`; `duration`: 1-30 seconds.
+- BOFT image-to-video input uses `media: [{"type": "first_frame", "url": "https://..."}]`.
+- Official base prices: `wan3.0-video` is ¥0.30/0.60/1.20 per second for 480p/720p/1080p; `wan3.0-video-prime` is ¥0.45/0.90/1.80 per second. BOFT group overrides and user multipliers may change the final user charge.
+
+Native request:
+
+```json
+{
+  "model": "wan3.0-video",
+  "input": {"prompt": "一只小猫在月光下的屋顶上奔跑"},
+  "parameters": {"resolution": "480P", "ratio": "adaptive", "duration": 5}
+}
+```
+
+The Prime model uses the same protocol; replace only `model` with `wan3.0-video-prime`.
+
 ## HappyHorse
 
 - Default model: `happyhorse-1.1-t2v`; with `--image`: `happyhorse-1.1-i2v`
