@@ -29,6 +29,7 @@ DEFAULT_MODELS = {
     "seedance": "doubao-seedance-2-0-260128",
     "grok-video": "grok-imagine-video-1.5",
 }
+MODE_CHOICES = ("auto", "t2v", "i2v", "kf2v", "r2v", "videoedit")
 DEFAULT_BASE_URLS = {
     "happyhorse": "https://dashscope.aliyuncs.com",
     "wan": "https://dashscope.aliyuncs.com",
@@ -206,6 +207,89 @@ def media_source(value: str, provider: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
+def requested_mode(args: argparse.Namespace) -> str:
+    if args.mode != "auto":
+        return args.mode
+    if args.model:
+        model = args.model.strip().lower()
+        if model.endswith("-video-edit"):
+            return "videoedit"
+        if model.endswith("-r2v"):
+            return "r2v"
+        if model.endswith("-i2v"):
+            return "i2v"
+    if args.video:
+        return "videoedit"
+    if args.references:
+        return "r2v"
+    if args.last_frame:
+        return "kf2v"
+    if args.image or args.first_frame:
+        return "i2v"
+    return "t2v"
+
+
+def media_url(value: str, provider: str) -> str:
+    return media_source(value, provider)
+
+
+def build_dashscope_media(args: argparse.Namespace, provider: str, mode: str) -> list[dict[str, str]]:
+    first_frame = args.first_frame or args.image
+    if mode == "i2v":
+        if not first_frame:
+            raise ValueError("i2v requires --image or --first-frame")
+        return [{"type": "first_frame", "url": media_url(first_frame, provider)}]
+    if mode == "kf2v":
+        if not first_frame or not args.last_frame:
+            raise ValueError("kf2v requires both --first-frame/--image and --last-frame")
+        return [
+            {"type": "first_frame", "url": media_url(first_frame, provider)},
+            {"type": "last_frame", "url": media_url(args.last_frame, provider)},
+        ]
+    if mode == "r2v":
+        if not args.references:
+            raise ValueError("r2v requires one or more --reference URLs")
+        if len(args.references) > 9:
+            raise ValueError("r2v supports at most 9 reference URLs")
+        return [{"type": "reference_image", "url": media_url(value, provider)} for value in args.references]
+    if mode == "videoedit":
+        if not args.video:
+            raise ValueError("videoedit requires --video")
+        if len(args.references) > 5:
+            raise ValueError("videoedit supports at most 5 reference URLs")
+        media = [{"type": "video", "url": media_url(args.video, provider)}]
+        media.extend({"type": "reference_image", "url": media_url(value, provider)} for value in args.references)
+        return media
+    return []
+
+
+def model_for_mode(provider: str, model: str | None, mode: str, has_image: bool) -> str:
+    if model:
+        return model
+    if provider == "wan":
+        return DEFAULT_MODELS[provider]
+    if provider == "happyhorse":
+        if mode == "kf2v":
+            raise ValueError("HappyHorse does not support first+last-frame mode; use Wan 3.0")
+        if mode == "videoedit":
+            return "happyhorse-1.0-video-edit"
+        if mode == "r2v":
+            return "happyhorse-1.1-r2v"
+        if mode == "i2v" or has_image:
+            return "happyhorse-1.1-i2v"
+    return DEFAULT_MODELS[provider]
+
+
+def validate_mode_constraints(provider: str, mode: str, model: str, duration: int | None, resolution: str | None) -> None:
+    if provider == "happyhorse":
+        if resolution == "480P":
+            raise ValueError("HappyHorse supports 720p or 1080p; 480p is not available")
+        if mode in {"t2v", "i2v", "r2v"} and duration is not None and not 3 <= duration <= 15:
+            raise ValueError("HappyHorse t2v/i2v/r2v duration must be between 3 and 15 seconds")
+        if mode == "kf2v":
+            raise ValueError("HappyHorse does not support first+last-frame mode; use Wan 3.0")
+
+
 def endpoint(base_url: str, provider: str, task_id: str | None = None) -> str:
     base = base_url.strip().rstrip("/")
     if not base:
@@ -270,17 +354,19 @@ def happyhorse_gateway(base_url: str) -> bool:
 
 def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
     prompt = read_prompt(args)
-    image = media_source(args.image, provider) if args.image else None
+    mode = requested_mode(args)
+    first_frame = args.first_frame or args.image
+    image = media_source(first_frame, provider) if first_frame else None
     ratio = normalize_ratio(args.ratio, provider)
     resolution = normalize_resolution(args.resolution, provider)
-    model = args.model
+    model = model_for_mode(provider, args.model, mode, bool(first_frame))
+    validate_mode_constraints(provider, mode, model, args.duration, resolution)
 
     if is_dashscope_video_provider(provider):
-        if not model:
-            model = "happyhorse-1.1-i2v" if provider == "happyhorse" and image else DEFAULT_MODELS[provider]
         input_data: dict[str, Any] = {"prompt": prompt}
-        if image:
-            input_data["media"] = [{"type": "first_frame", "url": image}]
+        media = build_dashscope_media(args, provider, mode)
+        if media:
+            input_data["media"] = media
         parameters: dict[str, Any] = {}
         if args.duration is not None:
             parameters["duration"] = args.duration
@@ -291,6 +377,8 @@ def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
         payload: dict[str, Any] = {"model": model, "input": input_data}
         if parameters:
             payload["parameters"] = parameters
+        if provider == "happyhorse" and mode == "i2v" and not dashscope_gateway(args.base_url or os.getenv("SK_VIDEO_BASE_URL") or first_env(BASE_URL_ENV_VARS[provider]) or DEFAULT_BASE_URLS[provider]):
+            parameters.pop("ratio", None)
         if dashscope_gateway(args.base_url or os.getenv("SK_VIDEO_BASE_URL") or first_env(BASE_URL_ENV_VARS[provider]) or DEFAULT_BASE_URLS[provider]):
             gateway_payload: dict[str, Any] = {"model": model, "prompt": prompt}
             if args.duration is not None:
@@ -299,8 +387,8 @@ def build_payload(args: argparse.Namespace, provider: str) -> dict[str, Any]:
                 gateway_payload["aspect_ratio"] = ratio
             if resolution:
                 gateway_payload["resolution"] = resolution.lower()
-            if image:
-                gateway_payload["media"] = [{"type": "first_frame", "url": image}]
+            if media:
+                gateway_payload["media"] = media
             payload = gateway_payload
     elif provider == "seedance":
         model = model or DEFAULT_MODELS[provider]
@@ -588,11 +676,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", help="provider API base URL or full create endpoint")
     parser.add_argument("--api-key", help="runtime API key; prefer environment variables")
     parser.add_argument("--model", help="provider model name; defaults depend on provider and input mode")
+    parser.add_argument("--mode", choices=MODE_CHOICES, default="auto", help="auto, t2v, i2v, kf2v, r2v, or videoedit")
     parser.add_argument("--prompt")
     parser.add_argument("--prompt-file")
-    parser.add_argument("--image", help="reference image URL, data URL, or supported local path")
+    parser.add_argument("--image", help="backward-compatible alias for --first-frame")
+    parser.add_argument("--first-frame", help="first-frame image URL")
+    parser.add_argument("--last-frame", help="last-frame image URL for Wan 3.0 keyframe transitions")
+    parser.add_argument("--reference", dest="references", action="append", default=[], help="reference image URL; repeat for r2v or videoedit")
+    parser.add_argument("--video", help="input video URL for videoedit")
     parser.add_argument("--duration", type=int, help="video duration in seconds")
-    parser.add_argument("--ratio", help="aspect ratio, for example 16:9, 9:16, or 1:1")
+    parser.add_argument("--ratio", help="aspect ratio, for example adaptive, 16:9, 9:16, or 1:1")
     parser.add_argument("--resolution", help="480p, 720p, or 1080p")
     parser.add_argument("--extra-json", help="JSON object or JSON file merged into the provider payload")
     parser.add_argument("--outdir", default="generated-videos")
@@ -610,12 +703,15 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         provider = canonical_provider(args.provider)
+        mode = requested_mode(args)
         if args.duration is not None and args.duration <= 0:
             raise ValueError("--duration must be positive")
         if provider == "grok-video" and args.duration is not None and args.duration > 15:
             raise ValueError("Grok Video duration must be between 1 and 15 seconds")
         if provider == "wan" and args.duration is not None and args.duration > 30:
             raise ValueError("Wan 3.0 duration must be between 1 and 30 seconds")
+        if provider == "happyhorse" and mode == "videoedit" and not args.model:
+            args.model = "happyhorse-1.0-video-edit"
         if args.poll_interval <= 0 or args.poll_timeout <= 0 or args.request_timeout <= 0:
             raise ValueError("timeouts and poll interval must be positive")
         if args.task_id and args.submit_only:

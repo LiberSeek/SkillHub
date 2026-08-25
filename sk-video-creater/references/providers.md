@@ -16,6 +16,8 @@ Read only the section for the selected provider. These schemas describe the nati
 - Use the BOFT response `id` (for example `vidjob_xxx`) when polling a BOFT gateway. `upstream_task_id` is the internal DashScope UUID and is not the BOFT query ID.
 - `resolution`: `480p`, `720p`, or `1080p`; `aspect_ratio`: `adaptive`, `16:9`, `9:16`, or `1:1`; `duration`: 1-30 seconds.
 - BOFT image-to-video input uses `media: [{"type": "first_frame", "url": "https://..."}]`.
+- Unified media roles use `first_frame`, `last_frame`, `reference_image`, and `video`; use `first_frame` + `last_frame` for a controlled transition, `reference_image` for subject/style consistency, and `video` for natural-language editing.
+- Wan 3.0 keeps the native DashScope envelope (`input.prompt`, optional `input.media`, and `parameters.resolution`/`ratio`/`duration`). It is not the Wan 2.6 `size`/`reference_urls` protocol.
 - Official base prices: `wan3.0-video` is ¥0.30/0.60/1.20 per second for 480p/720p/1080p; `wan3.0-video-prime` is ¥0.45/0.90/1.80 per second. BOFT group overrides and user multipliers may change the final user charge.
 
 Native request:
@@ -32,7 +34,7 @@ The Prime model uses the same protocol; replace only `model` with `wan3.0-video-
 
 ## HappyHorse
 
-- Default model: `happyhorse-1.1-t2v`; with `--image`: `happyhorse-1.1-i2v`
+- Mode defaults: `happyhorse-1.1-t2v` (t2v), `happyhorse-1.1-i2v` (one first frame), `happyhorse-1.1-r2v` (reference images), and `happyhorse-1.0-video-edit` (video edit).
 - Default base URL: `https://dashscope.aliyuncs.com`
 - Create: `POST /api/v1/services/aigc/video-generation/video-synthesis`
 - Query: `GET /api/v1/tasks/{task_id}`
@@ -56,6 +58,18 @@ For first-frame image-to-video, use model `happyhorse-1.1-i2v` and add:
 ```json
 {"input": {"prompt": "...", "media": [{"type": "first_frame", "url": "https://..."}]}}
 ```
+
+Reference-based video uses up to 9 media items:
+
+```json
+{
+  "model": "happyhorse-1.1-r2v",
+  "input": {"prompt": "character1 walks through a market", "media": [{"type": "reference_image", "url": "https://..."}]},
+  "parameters": {"resolution": "720P", "ratio": "16:9", "duration": 5}
+}
+```
+
+Video editing uses `happyhorse-1.0-video-edit` and `input.media` with one `{"type":"video"}` item followed by optional `{"type":"reference_image"}` items. It does not use a VACE `function` field.
 
 The key, model, and endpoint must be in the same Alibaba Cloud region. Workspace-specific regional domains are preferred. A successful task ID is valid for 24 hours; download signed results promptly.
 

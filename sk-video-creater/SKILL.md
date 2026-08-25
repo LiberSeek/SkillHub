@@ -1,6 +1,6 @@
 ---
 name: sk-video-creater
-description: Generate AI videos with Alibaba DashScope Wan/HappyHorse, Seedance (Volcengine Ark), or Grok Video (xAI). Use for text-to-video, image-to-video, asynchronous video task submission and polling, resuming an existing task, or downloading generated MP4 files when the user mentions Wan 3.0, HappyHorse, Seedance, Grok Imagine Video, Grok Video, or one of these providers' video models and APIs.
+description: Generate and edit AI videos with Alibaba DashScope Wan 3.0/HappyHorse, Seedance (Volcengine Ark), or Grok Video (xAI). Supports text-to-video, image-to-video, first+last-frame transitions, reference-based role-play, video editing, asynchronous polling, task resumption, and MP4 downloads.
 ---
 
 # SK Video Creater
@@ -11,8 +11,8 @@ Use `scripts/generate_video.py` for all API calls. It normalizes provider endpoi
 
 Honor an explicitly requested provider. If none is specified, choose only from providers with configured credentials and state the choice before submitting a paid task.
 
-- Use `happyhorse` for Alibaba Cloud Model Studio HappyHorse text-to-video or first-frame image-to-video.
-- Use `wan` for Alibaba Cloud Model Studio Wan 3.0 text-to-video. The supported models are `wan3.0-video` and `wan3.0-video-prime`; override with `--model` when selecting Prime. Wan supports 1-30 second output durations.
+- Use `happyhorse` for HappyHorse 1.1 text-to-video, first-frame image-to-video, or reference-based video; use `happyhorse-1.0-video-edit` for natural-language video editing. HappyHorse i2v requires exactly one first-frame media item; HappyHorse does not provide the Wan first+last-frame mode.
+- Use `wan` for Wan 3.0 all-in-one video generation. The supported models are `wan3.0-video` and `wan3.0-video-prime`; override with `--model` when selecting Prime. Wan supports text-to-video, first-frame, first+last-frame, reference-media, and video-edit inputs with 1-30 second output durations.
 - Use `seedance` for Volcengine Ark Seedance generation, especially multimodal references or native audio.
 - Use `grok-video` for xAI Grok Imagine Video text-to-video or image-to-video.
 
@@ -71,6 +71,37 @@ python3 /path/to/sk-video-creater/scripts/generate_video.py \
   --outdir ./generated-videos
 ```
 
+Wan 3.0 first+last-frame transition:
+
+```bash
+python3 /path/to/sk-video-creater/scripts/generate_video.py \
+  --provider wan --mode kf2v \
+  --first-frame https://example.com/start.png \
+  --last-frame https://example.com/end.png \
+  --prompt "A smooth camera rise connects the two moments" \
+  --duration 5 --ratio 16:9 --resolution 720p
+```
+
+Reference-based role-play (Wan 3.0 or HappyHorse R2V):
+
+```bash
+python3 /path/to/sk-video-creater/scripts/generate_video.py \
+  --provider happyhorse --mode r2v \
+  --reference https://example.com/character.png \
+  --prompt "character1 walks through the neon market and looks into camera" \
+  --duration 5 --ratio 16:9 --resolution 720p
+```
+
+Natural-language video editing:
+
+```bash
+python3 /path/to/sk-video-creater/scripts/generate_video.py \
+  --provider wan --mode videoedit --video https://example.com/input.mp4 \
+  --reference https://example.com/wardrobe.png \
+  --prompt "Replace the jacket with the referenced wardrobe while preserving motion" \
+  --duration 5
+```
+
 Image-to-video:
 
 ```bash
@@ -82,12 +113,12 @@ python3 /path/to/sk-video-creater/scripts/generate_video.py \
   --outdir ./generated-videos
 ```
 
-HappyHorse requires `--image` to be an HTTP(S) URL. Seedance and Grok Video also accept local image paths; the script converts them to data URLs.
+DashScope image/video inputs require reachable URLs (use `--first-frame`, `--last-frame`, `--reference`, or `--video`). Seedance and Grok Video also accept local image paths; the script converts them to data URLs.
 
 ## Workflow
 
 1. Confirm the provider and that its API key is configured.
-2. Preserve the user's subject, motion, camera direction, scene progression, duration, aspect ratio, resolution, audio intent, and reference-image constraints in the prompt and parameters.
+2. Classify the generation as text-to-video or image-to-video, then build the prompt with the matching formula in `references/prompting.md`. Preserve explicit user wording; enhance only missing dimensions.
 3. Run `--dry-run` when using a new model, custom gateway, or provider-specific payload. Check the endpoint and body without exposing credentials.
 4. Submit the task once. Poll the returned task ID instead of creating duplicate paid tasks.
 5. Download the result immediately because provider result URLs expire.
@@ -95,7 +126,7 @@ HappyHorse requires `--image` to be an HTTP(S) URL. Seedance and Grok Video also
 
 Use `--model` to override the provider default. Use `--extra-json` with a JSON object or JSON file for fields such as `generate_audio`, `seed`, `watermark`, `draft`, or newer provider options. The object is deep-merged into the native request body and may replace arrays such as Seedance `content`.
 
-Read `references/providers.md` before changing native payload fields, adding multimodal Seedance inputs, using regional HappyHorse endpoints, or diagnosing a provider-specific response.
+Read `references/prompting.md` when drafting or improving Wan/HappyHorse prompts, especially for motion, camera direction, audio, image-to-video, reference role-play, or timed shots. Read `references/providers.md` before changing native payload fields, adding multimodal inputs, using regional HappyHorse endpoints, or diagnosing a provider-specific response.
 
 ## Async Control
 

@@ -64,6 +64,15 @@ class MockVideoHandler(BaseHTTPRequestHandler):
 
 
 class VideoCliTests(unittest.TestCase):
+    def dry_run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *arguments, "--dry-run"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
     def run_provider(self, provider: str) -> tuple[dict[str, Any], dict[str, str]]:
         handler = type(f"{provider.title()}Handler", (MockVideoHandler,), {"provider": provider})
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -166,6 +175,110 @@ class VideoCliTests(unittest.TestCase):
         self.assertEqual(preview["create_endpoint"], "https://api.boft.ai/v1/videos/generations")
         self.assertEqual(preview["query_endpoint_template"], "https://api.boft.ai/v1/videos/generations/{task_id}")
         self.assertEqual(preview["body"]["media"], [{"type": "first_frame", "url": "https://example.com/first.png"}])
+
+    def test_wan_gateway_supports_first_and_last_frames(self) -> None:
+        result = self.dry_run(
+            "--provider", "wan", "--base-url", "https://api.boft.ai", "--mode", "kf2v",
+            "--first-frame", "https://example.com/start.png", "--last-frame", "https://example.com/end.png",
+            "--prompt", "A controlled transition", "--duration", "5", "--resolution", "720p",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(
+            preview["body"]["media"],
+            [
+                {"type": "first_frame", "url": "https://example.com/start.png"},
+                {"type": "last_frame", "url": "https://example.com/end.png"},
+            ],
+        )
+
+    def test_wan_gateway_supports_video_edit_media(self) -> None:
+        result = self.dry_run(
+            "--provider", "wan", "--base-url", "https://api.boft.ai", "--mode", "videoedit",
+            "--video", "https://example.com/input.mp4", "--reference", "https://example.com/coat.png",
+            "--prompt", "Replace the coat and preserve motion", "--duration", "5",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["body"]["model"], "wan3.0-video")
+        self.assertEqual(preview["body"]["media"][0]["type"], "video")
+        self.assertEqual(preview["body"]["media"][1]["type"], "reference_image")
+
+    def test_happyhorse_reference_mode_selects_r2v(self) -> None:
+        result = self.dry_run(
+            "--provider", "happyhorse", "--base-url", "https://dashscope.aliyuncs.com", "--mode", "r2v",
+            "--reference", "https://example.com/person.png", "--prompt", "character1 waves",
+            "--duration", "5", "--ratio", "16:9", "--resolution", "720p",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["body"]["model"], "happyhorse-1.1-r2v")
+        self.assertEqual(preview["body"]["input"]["media"], [{"type": "reference_image", "url": "https://example.com/person.png"}])
+
+    def test_happyhorse_video_edit_selects_model(self) -> None:
+        result = self.dry_run(
+            "--provider", "happyhorse", "--base-url", "https://dashscope.aliyuncs.com", "--mode", "videoedit",
+            "--video", "https://example.com/input.mp4", "--reference", "https://example.com/coat.png",
+            "--prompt", "Replace the jacket while preserving motion",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["body"]["model"], "happyhorse-1.0-video-edit")
+        self.assertEqual(preview["body"]["input"]["media"][0]["type"], "video")
+
+    def test_happyhorse_i2v_native_omits_ratio(self) -> None:
+        result = self.dry_run(
+            "--provider", "happyhorse", "--base-url", "https://dashscope.aliyuncs.com", "--mode", "i2v",
+            "--first-frame", "https://example.com/frame.png", "--prompt", "A slow push in",
+            "--duration", "5", "--ratio", "16:9", "--resolution", "720p",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertNotIn("ratio", preview["body"]["parameters"])
+
+    def test_happyhorse_rejects_keyframe_mode(self) -> None:
+        result = self.dry_run(
+            "--provider", "happyhorse", "--mode", "kf2v", "--first-frame", "https://example.com/start.png",
+            "--last-frame", "https://example.com/end.png", "--prompt", "A transition", "--duration", "5",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not support first+last-frame", result.stderr)
+
+    def test_wan_keyframe_allows_variable_duration(self) -> None:
+        result = self.dry_run(
+            "--provider", "wan", "--mode", "kf2v", "--first-frame", "https://example.com/start.png",
+            "--last-frame", "https://example.com/end.png", "--prompt", "A transition", "--duration", "8",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["body"]["duration"], 8)
+
+    def test_happyhorse_model_suffix_routes_and_validates_media(self) -> None:
+        result = self.dry_run(
+            "--provider", "happyhorse", "--model", "happyhorse-1.1-r2v",
+            "--prompt", "A reference performance",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("r2v requires", result.stderr)
+
+        result = self.dry_run(
+            "--provider", "happyhorse", "--model", "happyhorse-1.1-i2v",
+            "--prompt", "An image performance",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("i2v requires", result.stderr)
+
+    def test_happyhorse_r2v_mode_wins_over_first_frame(self) -> None:
+        result = self.dry_run(
+            "--provider", "happyhorse", "--base-url", "https://dashscope.aliyuncs.com", "--mode", "r2v",
+            "--first-frame", "https://example.com/first.png",
+            "--reference", "https://example.com/character.png",
+            "--prompt", "character1 waves",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(preview["body"]["model"], "happyhorse-1.1-r2v")
+        self.assertEqual(preview["body"]["input"]["media"][0]["type"], "reference_image")
 
     def test_ratio_validation_is_provider_specific(self) -> None:
         result = subprocess.run(
