@@ -201,7 +201,7 @@ def media_source(value: str, provider: str) -> str:
     if not path.is_file():
         raise ValueError(f"reference image not found: {path}")
     if is_dashscope_video_provider(provider):
-        raise ValueError("DashScope video models require a reachable image URL; upload the local image and pass its URL")
+        raise ValueError("DashScope video models require a reachable media URL; upload local media and pass its URL")
     mime_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
@@ -234,33 +234,37 @@ def media_url(value: str, provider: str) -> str:
 
 
 def build_dashscope_media(args: argparse.Namespace, provider: str, mode: str) -> list[dict[str, str]]:
+    if args.audio and provider != "wan":
+        raise ValueError("--audio input is supported only by Wan 3.0")
     first_frame = args.first_frame or args.image
+    media: list[dict[str, str]] = []
     if mode == "i2v":
         if not first_frame:
             raise ValueError("i2v requires --image or --first-frame")
-        return [{"type": "first_frame", "url": media_url(first_frame, provider)}]
+        media.append({"type": "first_frame", "url": media_url(first_frame, provider)})
     if mode == "kf2v":
         if not first_frame or not args.last_frame:
             raise ValueError("kf2v requires both --first-frame/--image and --last-frame")
-        return [
+        media.extend([
             {"type": "first_frame", "url": media_url(first_frame, provider)},
             {"type": "last_frame", "url": media_url(args.last_frame, provider)},
-        ]
+        ])
     if mode == "r2v":
         if not args.references:
             raise ValueError("r2v requires one or more --reference URLs")
         if len(args.references) > 9:
             raise ValueError("r2v supports at most 9 reference URLs")
-        return [{"type": "reference_image", "url": media_url(value, provider)} for value in args.references]
+        media.extend({"type": "reference_image", "url": media_url(value, provider)} for value in args.references)
     if mode == "videoedit":
         if not args.video:
             raise ValueError("videoedit requires --video")
         if len(args.references) > 5:
             raise ValueError("videoedit supports at most 5 reference URLs")
-        media = [{"type": "video", "url": media_url(args.video, provider)}]
+        media.append({"type": "video", "url": media_url(args.video, provider)})
         media.extend({"type": "reference_image", "url": media_url(value, provider)} for value in args.references)
-        return media
-    return []
+    if args.audio:
+        media.append({"type": "audio", "url": media_url(args.audio, provider)})
+    return media
 
 
 def model_for_mode(provider: str, model: str | None, mode: str, has_image: bool) -> str:
@@ -684,6 +688,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--last-frame", help="last-frame image URL for Wan 3.0 keyframe transitions")
     parser.add_argument("--reference", dest="references", action="append", default=[], help="reference image URL; repeat for r2v or videoedit")
     parser.add_argument("--video", help="input video URL for videoedit")
+    parser.add_argument("--audio", help="input audio URL for Wan 3.0 multimodal generation")
     parser.add_argument("--duration", type=int, help="video duration in seconds")
     parser.add_argument("--ratio", help="aspect ratio, for example adaptive, 16:9, 9:16, or 1:1")
     parser.add_argument("--resolution", help="480p, 720p, or 1080p")

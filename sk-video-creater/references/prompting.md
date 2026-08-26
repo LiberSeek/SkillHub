@@ -45,7 +45,7 @@ Wan 3.0 accepts unified `reference_image` media; HappyHorse R2V accepts up to ni
 
 ### First+last-frame transitions and video edits
 
-For Wan 3.0 `--mode kf2v`, describe only the transformation between the supplied frames: camera path, subject motion, and continuity. Do not redescribe two complete scenes or request audio if the selected mode is silent.
+For Wan 3.0 `--mode kf2v`, describe only the transformation between the supplied frames: camera path, subject motion, and continuity. When a `--video` or `--audio` input is supplied, describe how the generated result should preserve, extend, edit, or synchronize with that source. Do not request generated audio for a mode documented as silent.
 
 For `--mode videoedit`, describe the edit operation and what must remain unchanged: `replace the coat with the reference wardrobe, preserve the person's face, pose, timing, and background motion`. Wan 3.0 uses a `video` media item; HappyHorse video edit uses `happyhorse-1.0-video-edit`.
 

@@ -12,7 +12,7 @@ Use `scripts/generate_video.py` for all API calls. It normalizes provider endpoi
 Honor an explicitly requested provider. If none is specified, choose only from providers with configured credentials and state the choice before submitting a paid task.
 
 - Use `happyhorse` for HappyHorse 1.1 text-to-video, first-frame image-to-video, or reference-based video; use `happyhorse-1.0-video-edit` for natural-language video editing. HappyHorse i2v requires exactly one first-frame media item; HappyHorse does not provide the Wan first+last-frame mode.
-- Use `wan` for Wan 3.0 all-in-one video generation. The supported models are `wan3.0-video` and `wan3.0-video-prime`; override with `--model` when selecting Prime. Wan supports text-to-video, first-frame, first+last-frame, reference-media, and video-edit inputs with 1-30 second output durations.
+- Use `wan` for Wan 3.0 all-in-one video generation. The supported models are `wan3.0-video` and `wan3.0-video-prime`; override with `--model` when selecting Prime. Wan accepts text in `prompt` plus `first_frame`, `last_frame`, `reference_image`, `video`, and `audio` media inputs (including compatible `reference_video`/`reference_audio` aliases) with 1-30 second output durations.
 - Use `seedance` for Volcengine Ark Seedance generation, especially multimodal references or native audio.
 - Use `grok-video` for xAI Grok Imagine Video text-to-video or image-to-video.
 
@@ -82,6 +82,17 @@ python3 /path/to/sk-video-creater/scripts/generate_video.py \
   --duration 5 --ratio 16:9 --resolution 720p
 ```
 
+Wan 3.0 video and audio inputs:
+
+```bash
+python3 /path/to/sk-video-creater/scripts/generate_video.py \
+  --provider wan \
+  --video https://example.com/guide.mp4 \
+  --audio https://example.com/dialogue.mp3 \
+  --prompt "保持人物身份，按照音频完成自然口型" \
+  --duration 8 --resolution 1080p
+```
+
 Reference-based role-play (Wan 3.0 or HappyHorse R2V):
 
 ```bash
@@ -113,7 +124,7 @@ python3 /path/to/sk-video-creater/scripts/generate_video.py \
   --outdir ./generated-videos
 ```
 
-DashScope image/video inputs require reachable URLs (use `--first-frame`, `--last-frame`, `--reference`, or `--video`). Seedance and Grok Video also accept local image paths; the script converts them to data URLs.
+DashScope image/video/audio inputs require reachable URLs (use `--first-frame`, `--last-frame`, `--reference`, `--video`, or `--audio`). Seedance and Grok Video also accept local image paths; the script converts them to data URLs. HappyHorse rejects Wan-only `last_frame`, `video`, and `audio` media types.
 
 ## Workflow
 
