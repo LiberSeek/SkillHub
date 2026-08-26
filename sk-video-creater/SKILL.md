@@ -1,6 +1,6 @@
 ---
 name: sk-video-creater
-description: Generate and edit AI videos with Alibaba DashScope Wan 3.0/HappyHorse, Seedance (Volcengine Ark), or Grok Video (xAI). Supports text-to-video, image-to-video, first+last-frame transitions, reference-based role-play, video editing, asynchronous polling, task resumption, and MP4 downloads.
+description: Generate and edit AI videos with Alibaba DashScope Wan 3.0/HappyHorse, Seedance (Volcengine Ark), or Grok Video (xAI). Supports multimodal Wan text/image/video/audio inputs, first+last-frame transitions, reference-based role-play, video editing, asynchronous polling, task resumption, and MP4 downloads.
 ---
 
 # SK Video Creater
