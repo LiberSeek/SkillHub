@@ -260,10 +260,10 @@ def build_dashscope_media(args: argparse.Namespace, provider: str, mode: str) ->
             raise ValueError("videoedit requires --video")
         if len(args.references) > 5:
             raise ValueError("videoedit supports at most 5 reference URLs")
-        media.append({"type": "video", "url": media_url(args.video, provider)})
+        media.append({"type": "reference_video" if provider == "wan" else "video", "url": media_url(args.video, provider)})
         media.extend({"type": "reference_image", "url": media_url(value, provider)} for value in args.references)
     if args.audio:
-        media.append({"type": "audio", "url": media_url(args.audio, provider)})
+        media.append({"type": "reference_audio", "url": media_url(args.audio, provider)})
     return media
 
 
