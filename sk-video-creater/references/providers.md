@@ -16,7 +16,7 @@ Read only the section for the selected provider. These schemas describe the nati
 - Use the BOFT response `id` (for example `vidjob_xxx`) when polling a BOFT gateway. `upstream_task_id` is the internal DashScope UUID and is not the BOFT query ID.
 - `resolution`: `480p`, `720p`, or `1080p`; `aspect_ratio`: `adaptive`, `16:9`, `9:16`, or `1:1`; `duration`: 1-30 seconds.
 - BOFT image-to-video input uses `media: [{"type": "first_frame", "url": "https://..."}]`.
-- Official unified media roles use `first_frame`, `last_frame`, `reference_image`, `reference_video`, and `reference_audio`; use `first_frame` + `last_frame` for a controlled transition, `reference_image` for subject/style consistency, `reference_video` for continuation/editing, and `reference_audio` for audio-driven or lip-sync input. BOFT also accepts `video`/`audio` aliases and normalizes them to the official names.
+- Wan 3.0 official media roles are `first_frame`, `last_frame`, `reference_image`, `reference_video`, and `reference_audio`; use `first_frame` + `last_frame` for a controlled transition, `reference_image` for subject/style consistency, `reference_video` for continuation/editing, and `reference_audio` for audio-driven or lip-sync input. Do not substitute HappyHorse or Ark media names when sending a custom Wan payload.
 - Wan 3.0 keeps the native DashScope envelope (`input.prompt`, optional `input.media`, and `parameters.resolution`/`ratio`/`duration`). It is not the Wan 2.6 `size`/`reference_urls` protocol.
 - Official base prices: `wan3.0-video` is ¥0.30/0.60/1.20 per second for 480p/720p/1080p; `wan3.0-video-prime` is ¥0.45/0.90/1.80 per second. BOFT group overrides and user multipliers may change the final user charge.
 
